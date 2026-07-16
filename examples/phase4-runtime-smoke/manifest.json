@@ -1,0 +1,13 @@
+{
+  "rpaFlowId": "rpa_flow_phase4_runtime_smoke",
+  "name": "Phase 4 Runtime Smoke",
+  "version": "0.1.0",
+  "engineType": "PLAYWRIGHT_CDP",
+  "entrypoint": "flow.py:run",
+  "supportedWorkflowCodes": ["phase4_runtime_smoke"],
+  "supportedPortalTypes": ["MOCK"],
+  "inputSchema": [
+    {"name": "message", "type": "string", "required": true}
+  ],
+  "capabilities": ["screenshot"]
+}

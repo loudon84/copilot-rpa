@@ -1,0 +1,13 @@
+{
+  "rpaFlowId": "rpa_flow_phase2_api_demo",
+  "name": "Phase 2 API Demo",
+  "version": "0.1.0",
+  "engineType": "PLAYWRIGHT_CDP",
+  "entrypoint": "flow.py:run",
+  "supportedWorkflowCodes": ["phase2_demo"],
+  "supportedPortalTypes": ["MOCK"],
+  "inputSchema": [
+    {"name": "record_id", "type": "string", "required": true}
+  ],
+  "capabilities": ["screenshot"]
+}

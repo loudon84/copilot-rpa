@@ -1,0 +1,68 @@
+{
+  "info": {
+    "name": "RPA Engine Phase 3 Worker",
+    "description": "Phase 3 observability plus safe Task register/heartbeat smoke requests. No real lease request is included.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {"key": "engineBaseUrl", "value": "http://127.0.0.1:4610"},
+    {"key": "taskBaseUrl", "value": "http://127.0.0.1:4520/api/v1/autotask"},
+    {"key": "actorId", "value": "phase3-postman"},
+    {"key": "workerId", "value": "server-worker-phase3-smoke"}
+  ],
+  "item": [
+    {
+      "name": "Engine Health",
+      "item": [
+        {"name": "Live", "request": {"method": "GET", "url": "{{engineBaseUrl}}/health/live"}},
+        {"name": "Ready", "request": {"method": "GET", "url": "{{engineBaseUrl}}/health/ready"}}
+      ]
+    },
+    {
+      "name": "Engine Worker Read API",
+      "item": [
+        {
+          "name": "List Workers",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "X-Actor-Id", "value": "{{actorId}}"}],
+            "url": "{{engineBaseUrl}}/api/v1/workers?capability=PLAYWRIGHT_CDP&limit=50&offset=0"
+          }
+        },
+        {
+          "name": "Get Worker",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "X-Actor-Id", "value": "{{actorId}}"}],
+            "url": "{{engineBaseUrl}}/api/v1/workers/{{workerId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Task Safe Smoke Only",
+      "description": "These calls mutate only the dedicated smoke Worker. Do not add or call lease here.",
+      "item": [
+        {
+          "name": "Register Dedicated Worker",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"worker_id\": \"{{workerId}}\",\n  \"worker_type\": \"SERVER_WORKER\",\n  \"device_name\": \"phase3-smoke\",\n  \"app_version\": \"0.5.0\",\n  \"agent_version\": \"0.5.0\",\n  \"os\": \"Windows\",\n  \"capabilities\": [\"PLAYWRIGHT_CDP\", \"BROWSER_SESSION_MANAGED\"]\n}"
+            },
+            "url": "{{taskBaseUrl}}/worker-api/workers/register"
+          }
+        },
+        {
+          "name": "Heartbeat Dedicated Worker",
+          "request": {
+            "method": "POST",
+            "url": "{{taskBaseUrl}}/worker-api/workers/{{workerId}}/heartbeat"
+          }
+        }
+      ]
+    }
+  ]
+}

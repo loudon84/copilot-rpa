@@ -1,0 +1,224 @@
+{
+  "info": {
+    "_postman_id": "b402a7e2-907d-4e72-a791-2a5e20000001",
+    "name": "AutoTask RPA Engine - Phase 2",
+    "description": "Flow Registry and Package Store requests. Override engine_base_url for remote environments.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {"type": "noauth"},
+  "variable": [
+    {"key": "engine_base_url", "value": "http://127.0.0.1:4610"},
+    {"key": "actor_id", "value": "postman-phase2"},
+    {"key": "tenant_id", "value": ""},
+    {"key": "flow_id", "value": "rpa_flow_phase2_api_demo"},
+    {"key": "flow_version", "value": "0.1.0"},
+    {"key": "flow_version_id", "value": ""},
+    {"key": "workflow_code", "value": "phase2_demo"},
+    {"key": "flow_package_path", "value": ""}
+  ],
+  "item": [
+    {
+      "name": "00 Health",
+      "item": [
+        {
+          "name": "Live",
+          "request": {
+            "method": "GET",
+            "url": "{{engine_base_url}}/health/live"
+          }
+        },
+        {
+          "name": "Ready",
+          "request": {
+            "method": "GET",
+            "url": "{{engine_base_url}}/health/ready"
+          }
+        }
+      ]
+    },
+    {
+      "name": "01 Flow Registry",
+      "item": [
+        {
+          "name": "List flows",
+          "request": {
+            "method": "GET",
+            "header": [
+              {"key": "X-Actor-Id", "value": "{{actor_id}}"}
+            ],
+            "url": "{{engine_base_url}}/api/v1/flows?limit=50&offset=0"
+          }
+        },
+        {
+          "name": "Upload Flow package",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set('flow_id', body.flow.rpaFlowId);",
+                  "  pm.collectionVariables.set('flow_version', body.version.version);",
+                  "  pm.collectionVariables.set('flow_version_id', body.version.rpaFlowVersionId);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "X-Actor-Id", "value": "{{actor_id}}"}
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {"key": "package", "type": "file", "src": "{{flow_package_path}}"},
+                {"key": "scope", "type": "text", "value": "GLOBAL"},
+                {"key": "description", "type": "text", "value": "Postman Phase 2 upload"},
+                {"key": "labels", "type": "text", "value": "[\"postman\",\"phase2\"]"}
+              ]
+            },
+            "url": "{{engine_base_url}}/api/v1/flows/packages"
+          }
+        },
+        {
+          "name": "Get Flow detail",
+          "request": {
+            "method": "GET",
+            "header": [
+              {"key": "X-Actor-Id", "value": "{{actor_id}}"}
+            ],
+            "url": "{{engine_base_url}}/api/v1/flows/{{flow_id}}?scope=GLOBAL"
+          }
+        },
+        {
+          "name": "List Flow versions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {"key": "X-Actor-Id", "value": "{{actor_id}}"}
+            ],
+            "url": "{{engine_base_url}}/api/v1/flows/{{flow_id}}/versions?scope=GLOBAL"
+          }
+        },
+        {
+          "name": "Rollback Flow",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "X-Actor-Id", "value": "{{actor_id}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"targetFlowVersionId\": \"{{flow_version_id}}\",\n  \"reason\": \"Postman rollback\"\n}"
+            },
+            "url": "{{engine_base_url}}/api/v1/flows/{{flow_id}}/rollback?scope=GLOBAL"
+          }
+        },
+        {
+          "name": "Disable Flow",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "X-Actor-Id", "value": "{{actor_id}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {"mode": "raw", "raw": "{\"reason\":\"Postman disable\"}"},
+            "url": "{{engine_base_url}}/api/v1/flows/{{flow_id}}/disable?scope=GLOBAL"
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 Flow Version",
+      "item": [
+        {
+          "name": "Get Flow Version",
+          "request": {
+            "method": "GET",
+            "header": [
+              {"key": "X-Actor-Id", "value": "{{actor_id}}"}
+            ],
+            "url": "{{engine_base_url}}/api/v1/flow-versions/{{flow_version_id}}"
+          }
+        },
+        {
+          "name": "Validate Flow Version",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "X-Actor-Id", "value": "{{actor_id}}"}
+            ],
+            "url": "{{engine_base_url}}/api/v1/flow-versions/{{flow_version_id}}/validate"
+          }
+        },
+        {
+          "name": "Publish Flow Version",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "X-Actor-Id", "value": "{{actor_id}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {"mode": "raw", "raw": "{\"reason\":\"Postman publish\"}"},
+            "url": "{{engine_base_url}}/api/v1/flow-versions/{{flow_version_id}}/publish"
+          }
+        },
+        {
+          "name": "Deprecate Flow Version",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "X-Actor-Id", "value": "{{actor_id}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {"mode": "raw", "raw": "{\"reason\":\"Postman deprecate\"}"},
+            "url": "{{engine_base_url}}/api/v1/flow-versions/{{flow_version_id}}/deprecate"
+          }
+        },
+        {
+          "name": "Validate binding",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "X-Actor-Id", "value": "{{actor_id}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rpaFlowVersionId\": \"{{flow_version_id}}\",\n  \"workflowCode\": \"{{workflow_code}}\"\n}"
+            },
+            "url": "{{engine_base_url}}/api/v1/flow-versions/validate-binding"
+          }
+        },
+        {
+          "name": "Get Package redirect",
+          "protocolProfileBehavior": {"followRedirects": false},
+          "request": {
+            "method": "GET",
+            "header": [
+              {"key": "X-Actor-Id", "value": "{{actor_id}}"}
+            ],
+            "url": "{{engine_base_url}}/api/v1/flow-versions/{{flow_version_id}}/package"
+          }
+        },
+        {
+          "name": "Disable Flow Version",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "X-Actor-Id", "value": "{{actor_id}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {"mode": "raw", "raw": "{\"reason\":\"Postman disable\"}"},
+            "url": "{{engine_base_url}}/api/v1/flow-versions/{{flow_version_id}}/disable"
+          }
+        }
+      ]
+    }
+  ]
+}

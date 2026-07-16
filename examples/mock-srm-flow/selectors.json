@@ -1,0 +1,14 @@
+{
+  "username": "#username",
+  "password": "#password",
+  "login_button": "#login-button",
+  "login_error": "#login-error",
+  "workspace": "#workspace",
+  "po_number": "#po-number",
+  "search_button": "#search-button",
+  "search_status": "#search-status",
+  "po_result": "#po-result",
+  "not_found": "#not-found",
+  "human_check": "#human-check",
+  "download_contract": "#download-contract"
+}
