@@ -88,13 +88,11 @@ class BrowserSessionConfig(CamelModel):
 
 class RunConfig(CamelModel):
     browser_session: BrowserSessionConfig
-    portal_url: str | None = None
+    portal_url: str
 
     @field_validator("portal_url")
     @classmethod
-    def validate_portal_url(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
+    def validate_portal_url(cls, value: str) -> str:
         parsed = urlsplit(value)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("portalUrl must be an HTTP(S) URL")
@@ -155,8 +153,9 @@ class RunFinishRequest(CamelModel):
 
 
 class ArtifactUploadUrlRequest(CamelModel):
+    worker_id: str
     task_id: str
-    run_id: str | None = None
+    run_id: str
     name: str
     mime_type: str | None = None
 

@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from nodeskclaw_rpa_engine.core.config import Settings
 from nodeskclaw_rpa_engine.workers.errors import TaskApiError
@@ -11,6 +12,7 @@ from nodeskclaw_rpa_engine.workers.schemas import (
     ArtifactUploadUrlRequest,
     AttemptStatus,
     RunArtifactCreate,
+    RunConfig,
     RunEventRequest,
     RunFinishRequest,
     WorkerLeaseRenewRequest,
@@ -22,6 +24,34 @@ from nodeskclaw_rpa_engine.workers.task_client import TaskWorkerApiClient
 
 def worker_settings() -> Settings:
     return Settings(_env_file=None, app_env="test", task_api_base_url="http://task/api")
+
+
+def test_artifact_upload_url_request_requires_run_id() -> None:
+    with pytest.raises(ValidationError):
+        ArtifactUploadUrlRequest.model_validate(
+            {
+                "worker_id": "worker-1",
+                "task_id": "task-1",
+                "name": "evidence.png",
+                "mime_type": "image/png",
+            }
+        )
+
+
+def test_run_config_requires_portal_url() -> None:
+    with pytest.raises(ValidationError):
+        RunConfig.model_validate(
+            {
+                "browserSession": {
+                    "mode": "MANAGED",
+                    "headless": True,
+                    "channel": "chrome",
+                    "profileRef": None,
+                    "cdpEndpointRef": None,
+                    "closePolicy": "CLOSE_ON_FINISH",
+                }
+            }
+        )
 
 
 async def test_task_client_handles_snake_requests_and_camel_lease_response() -> None:
@@ -49,6 +79,7 @@ async def test_task_client_handles_snake_requests_and_camel_lease_response() -> 
                 "rpaFlowVersion": "1.2.3",
                 "credentialRef": "credential-1",
                 "config": {
+                    "portalUrl": "http://mock.test",
                     "browserSession": {
                         "mode": "MANAGED",
                         "headless": True,
@@ -105,6 +136,7 @@ async def test_task_client_handles_snake_requests_and_camel_lease_response() -> 
     await client.close()
 
     assert leases[0].rpa_flow_version == "1.2.3"
+    assert leases[0].config.portal_url == "http://mock.test"
     assert leases[0].config.browser_session.mode == "MANAGED"
     assert renewal.lease_expires_at == expires_at
     assert calls[0][2] == {
@@ -215,6 +247,7 @@ async def test_task_client_uploads_artifact_with_mixed_task_contract() -> None:
     )
     target = await client.request_artifact_upload_url(
         ArtifactUploadUrlRequest(
+            worker_id="worker-1",
             task_id="task-1",
             run_id="run-1",
             name="evidence.png",
@@ -238,7 +271,9 @@ async def test_task_client_uploads_artifact_with_mixed_task_contract() -> None:
     )
     await client.close()
 
+    assert calls[0][:2] == ("POST", "/api/worker-api/artifacts/upload-url")
     assert calls[0][2] == {
+        "worker_id": "worker-1",
         "task_id": "task-1",
         "run_id": "run-1",
         "name": "evidence.png",

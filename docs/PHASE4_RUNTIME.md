@@ -15,7 +15,8 @@ polling by default.
   BrowserContext, Page, download directory, Trace, and deterministic cleanup.
 - `ArtifactRecorder`: records screenshots, downloads, Trace, and logs under the
   run directory; checks path and size; hashes the file; then uses Task
-  `artifacts/upload-url`, signed PUT, and run Artifact metadata callback.
+  `/worker-api/artifacts/upload-url`, signed PUT, and run Artifact metadata
+  callback.
 - `ErrorHandler`: maps retryable, business, human-required, fatal, timeout, and
   unknown errors to retry, FAILED, or WAITING_HUMAN.
 - `RpaRuntime`: composes loading, credentials, browser, context, retry, failure
@@ -71,10 +72,15 @@ The development machine may also use installed Chrome with `channel=chrome`.
 
 ```text
 Flow -> ArtifactRecorder -> local run file
-     -> Task artifacts/upload-url
+     -> Task POST /worker-api/artifacts/upload-url
      -> signed object-storage PUT
      -> Task worker-api/runs/{runId}/artifacts metadata
 ```
+
+The upload-url request uses `worker_id`, `task_id`, `run_id`, `name`, and
+`mime_type`. This route and request shape were confirmed by read-only
+test-server OpenAPI inspection on 2026-07-16; the inspection did not upload an
+Artifact or invoke the metadata callback.
 
 Signed URLs are never persisted. Structured logging redacts common signed-query
 credentials. Run files are deleted after browser cleanup when
@@ -95,18 +101,26 @@ Flow log/event payloads pass through the standard sensitive-field redactor.
 
 ## Current integration gates
 
-- Real Task lease remains disabled because the test-server lease response still
-  lacks the Phase 3 execution snapshot fields recorded in
-  `PHASE3_WORKER.md`.
+- The 2026-07-16 read-only test-server OpenAPI inspection confirms the complete
+  lease snapshot shape and `leaseExpiresAt` in both lease and renew contracts.
+  No lease was requested, no dedicated real snapshot was inspected, and the
+  real lease/renew/callback sequence has not yet run end to end.
+- Real Task lease remains disabled until dedicated Task data is approved and
+  the lease resolves to the exact active published Registry version. Selecting
+  a latest version as a fallback is forbidden.
 - The default credential resolver rejects non-null `credentialRef`. A strictly
   scoped `mock_env` resolver is available only for the development/test Mock SRM
-  demonstration; a governed credential service adapter is still required for
-  real portal credentials.
+  demonstration. Its credential reference, tenant, Portal account, and
+  controlled Portal URL must match the dedicated lease; a governed credential
+  service adapter is still required for real portal credentials.
 - `config.portalUrl` is accepted only for controlled Mock Runtime commands.
   Production portal resolution from `portalAccountId` still needs a governed
   Task/Portal configuration adapter.
 - Event and Artifact metadata callbacks are direct. Durable Callback Outbox
   dispatch is not yet wired into the Runtime callback path.
+- Lease, renew, event, Artifact upload/metadata, and finish must pass a dedicated
+  real end-to-end test before lease polling is enabled. Production
+  service-account authentication remains a separate release gate.
 - Python Flow modules execute in the Engine process. Static policy checks reduce
   accidental violations but are not an OS-level sandbox; process/container
   isolation remains a production-hardening decision.

@@ -63,6 +63,7 @@ def lease(lease_id: str = "lease-1", *, expires_in: float = 60) -> LeaseRunComma
             "rpaFlowVersion": "1.0.0",
             "credentialRef": None,
             "config": {
+                "portalUrl": "http://mock.test",
                 "browserSession": {
                     "mode": "MANAGED",
                     "headless": True,

@@ -2,14 +2,19 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import cast
+from unittest.mock import AsyncMock
 
 import pytest
 
 from nodeskclaw_rpa_engine.runtime.artifacts import (
     ArtifactRecorder,
     ArtifactType,
+    TaskArtifactSink,
 )
 from nodeskclaw_rpa_engine.runtime.errors import RpaFatalError
+from nodeskclaw_rpa_engine.workers.schemas import ArtifactUploadTarget
+from nodeskclaw_rpa_engine.workers.task_client import TaskWorkerApiClient
 
 
 class FakePage:
@@ -32,6 +37,40 @@ class RecordingSink:
     async def upload(self, **kwargs) -> str:
         self.items.append(kwargs)
         return f"artifacts/{kwargs['run_id']}/{kwargs['name']}"
+
+
+async def test_task_artifact_sink_uses_stable_worker_id(tmp_path) -> None:
+    client = AsyncMock(spec=TaskWorkerApiClient)
+    client.request_artifact_upload_url.return_value = ArtifactUploadTarget(
+        upload_url="http://storage.test/upload",
+        storage_key="artifacts/run-1/evidence.png",
+    )
+    sink = TaskArtifactSink(
+        cast(TaskWorkerApiClient, client),
+        worker_id="worker-stable",
+    )
+    path = tmp_path / "evidence.png"
+    path.write_bytes(b"image")
+
+    storage_key = await sink.upload(
+        task_id="task-1",
+        run_id="run-1",
+        artifact_type=ArtifactType.SCREENSHOT,
+        name="evidence.png",
+        path=path,
+        size=5,
+        mime_type="image/png",
+    )
+
+    upload_request = client.request_artifact_upload_url.await_args.args[0]
+    assert upload_request.model_dump(mode="json", by_alias=False) == {
+        "worker_id": "worker-stable",
+        "task_id": "task-1",
+        "run_id": "run-1",
+        "name": "evidence.png",
+        "mime_type": "image/png",
+    }
+    assert storage_key == "artifacts/run-1/evidence.png"
 
 
 async def test_artifact_recorder_uploads_screenshot_and_download(tmp_path) -> None:

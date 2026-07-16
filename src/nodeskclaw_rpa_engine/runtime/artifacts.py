@@ -55,8 +55,9 @@ class ArtifactSink(Protocol):
 
 
 class TaskArtifactSink:
-    def __init__(self, client: TaskWorkerApiClient) -> None:
+    def __init__(self, client: TaskWorkerApiClient, *, worker_id: str) -> None:
         self._client = client
+        self._worker_id = worker_id
 
     async def upload(
         self,
@@ -72,6 +73,7 @@ class TaskArtifactSink:
         try:
             target = await self._client.request_artifact_upload_url(
                 ArtifactUploadUrlRequest(
+                    worker_id=self._worker_id,
                     task_id=task_id,
                     run_id=run_id,
                     name=name,

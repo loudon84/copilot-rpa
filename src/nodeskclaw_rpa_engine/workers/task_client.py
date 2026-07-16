@@ -108,7 +108,7 @@ class TaskWorkerApiClient:
     ) -> ArtifactUploadTarget:
         data = await self._request_data(
             "POST",
-            "artifacts/upload-url",
+            "worker-api/artifacts/upload-url",
             json=request.model_dump(
                 mode="json",
                 by_alias=False,

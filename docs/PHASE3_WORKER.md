@@ -56,11 +56,13 @@ The response status is computed as `OFFLINE` when the stored ONLINE/BUSY
 heartbeat is older than the configured threshold. Phase 3 exposes no
 drain/resume mutation API.
 
-## Required Task lease contract
+## Task lease contract
 
-### Test-server contract gap recorded on 2026-07-14
+### Test-server schema verification on 2026-07-16
 
-The current test-server `WorkerLeaseResponse` exposes only:
+A read-only inspection of the test-server OpenAPI confirms that
+`WorkerLeaseResponse` now exposes the original dispatch fields and the Phase 3
+immutable execution snapshot:
 
 ```text
 taskId
@@ -70,34 +72,35 @@ workflowBindingId
 portalAccountId
 rpaFlowId
 input
-```
-
-It is missing all Phase 3 execution-snapshot fields:
-
-```text
 tenantId
 workflowTemplateId
 workflowCode
 rpaEngineType
 rpaFlowVersion
 credentialRef
-config.browserSession.mode
-config.browserSession.headless
-config.browserSession.channel
-config.browserSession.profileRef
-config.browserSession.cdpEndpointRef
-config.browserSession.closePolicy
+config.portalUrl
+config.browserSession
 leaseExpiresAt
 ```
 
-Impact: register, heartbeat, readiness, and Worker observation can be integrated
-with the test server, but real lease polling and Task-driven Runtime execution
-remain blocked. The Engine must not infer the missing version by selecting a
-latest Registry version. Phase 4 Runtime development therefore uses typed mock
-commands until Task extends this response.
+The renew response schema also returns `leaseExpiresAt`. The documented Worker
+Artifact upload-url operation is `POST /worker-api/artifacts/upload-url`, with
+the following request fields:
 
-The existing lease fields remain required. Task must additionally return the
-following fields before real lease polling can be enabled:
+```text
+worker_id
+task_id
+run_id
+name
+mime_type
+```
+
+The field-shape compatibility check has therefore passed. It was read-only: no
+lease was requested, no dedicated real execution snapshot was inspected, and
+no Task-driven end-to-end run was performed. It must not be treated as evidence
+that register, heartbeat, lease, renew, or callback behavior succeeded.
+
+A compatible lease payload has the following shape:
 
 ```json
 {
@@ -108,6 +111,7 @@ following fields before real lease polling can be enabled:
   "rpaFlowVersion": "1.0.0",
   "credentialRef": "credential-1",
   "config": {
+    "portalUrl": "http://127.0.0.1:4600",
     "browserSession": {
       "mode": "MANAGED",
       "headless": true,
@@ -129,6 +133,19 @@ The current test Task OpenAPI uses snake_case for Worker request bodies and
 camelCase for `WorkerLeaseResponse`. The compatibility client preserves that
 mixed wire contract; Engine public API responses remain camelCase.
 
+Keep `WORKER_LEASE_ENABLED=false` until all controlled integration gates are
+complete:
+
+1. Dedicated Task binding/run data is approved for Engine testing.
+2. `rpaFlowId + rpaFlowVersion + tenantId` resolves to the exact active,
+   published Registry version; the Engine never substitutes a latest version.
+3. The dedicated Mock credential reference, tenant, Portal account scope, and
+   controlled `config.portalUrl` are aligned with the lease snapshot.
+4. Real lease, renew, event, Artifact upload/metadata, and finish callbacks pass
+   end to end.
+5. Callback Outbox delivery and production service-account authentication are
+   addressed before production enablement.
+
 ## Attempt and shutdown behavior
 
 - A new accepted lease is recorded as `dispatchMode=LEASE` and `LEASED`.
@@ -148,7 +165,7 @@ reliable Callback Outbox delivery is a Phase 4 responsibility.
 ## Live-smoke boundary
 
 Use the dedicated ID `server-worker-phase3-smoke`, keep
-`WORKER_LEASE_ENABLED=false`, and verify only:
+`WORKER_LEASE_ENABLED=false`, and, when separately approved, verify only:
 
 1. Task register returns HTTP 200 with a successful Task envelope.
 2. Task heartbeat returns HTTP 200 with a successful Task envelope.
@@ -156,3 +173,4 @@ Use the dedicated ID `server-worker-phase3-smoke`, keep
 4. On shutdown, Engine internal status becomes OFFLINE.
 
 Do not call the real Task lease endpoint during Phase 3 smoke testing.
+The 2026-07-16 OpenAPI verification did not execute this smoke procedure.

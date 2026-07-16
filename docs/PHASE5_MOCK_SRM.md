@@ -113,16 +113,29 @@ and `flow.py`; it contains no credentials or environment configuration.
 ## Central AutoTask integration hold points
 
 Local Phase 5 browser execution is complete. The central Task -> Worker ->
-Runtime -> Artifact -> finish demonstration remains gated by external contract
-work:
+Runtime -> Artifact -> finish demonstration remains gated by controlled
+integration work. A read-only test-server OpenAPI inspection on 2026-07-16
+confirmed that `WorkerLeaseResponse` includes the required execution snapshot,
+including `config.portalUrl`, `config.browserSession`, and `leaseExpiresAt`;
+renew also returns `leaseExpiresAt`. The Worker Artifact upload-url operation is
+`POST /worker-api/artifacts/upload-url` with `worker_id`, `task_id`, `run_id`,
+`name`, and `mime_type`.
 
-- Task `WorkerLeaseResponse` must include the Phase 3 execution snapshot fields.
+The schema check did not request a lease, inspect a dedicated real snapshot, or
+execute callbacks. The remaining gates are:
+
+- Dedicated Task binding/run data must be approved for this demonstration.
+- The lease must resolve to the exact active published Registry version for
+  `rpaFlowId + rpaFlowVersion + tenantId`; latest-version fallback is forbidden.
 - The Engine `mock_env` resolver may resolve one dedicated Mock credentialRef in
-  development/test; production still requires a governed credential adapter.
-- Task must provide the controlled Mock portal URL in the command snapshot or a
-  governed Portal resolver must derive it from `portalAccountId`.
+  development/test. Its tenant and Portal-account scope must match, and Task
+  must supply the controlled Mock Portal URL in the lease snapshot. Production
+  still requires a governed credential/Portal adapter.
+- Real lease, renew, event, Artifact upload/metadata, and finish callbacks must
+  pass end to end.
 - Durable Callback Outbox delivery is still pending; current callbacks are
   direct best-effort calls.
+- Production Worker service-account authentication is still pending.
 
 Keep `WORKER_LEASE_ENABLED=false` until those items are complete and a dedicated
 test binding/run is approved.

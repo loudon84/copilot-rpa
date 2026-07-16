@@ -114,7 +114,10 @@ def create_app(
                 ObjectStorageFlowPackageSource(object_storage),
             ),
             browser_manager=ManagedBrowserSessionManager(),
-            artifact_sink=TaskArtifactSink(resolved_task_client),
+            artifact_sink=TaskArtifactSink(
+                resolved_task_client,
+                worker_id=resolved_settings.worker_id,
+            ),
             event_sink_factory=lambda command: TaskRuntimeEventSink(
                 resolved_task_client,
                 run_id=command.lease.run_id,

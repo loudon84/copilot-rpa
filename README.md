@@ -8,11 +8,13 @@ Playwright sessions, Artifact recording, and standardized error mapping.
 
 The Engine owns Flow Registry metadata and Flow Packages. `nodeskclaw-task`
 owns WorkflowBinding, business tasks, runs, events, Artifact metadata, and
-HumanAction. Real Task lease polling remains disabled until Task supplies the
-complete immutable execution snapshot described in `docs/PHASE3_WORKER.md`.
-The included deterministic Mock SRM Flow covers SUCCESS, FAILED, and
-WAITING_HUMAN outcomes; WAITING_HUMAN uses the type-A model and does not resume
-the original server browser session.
+HumanAction. A read-only test-server OpenAPI check on 2026-07-16 confirmed the
+required lease/renew schema and Worker Artifact upload-url route. Real Task
+lease polling remains disabled until dedicated test data, an exact published
+Registry version, Mock scope/Portal configuration, and the full callback path
+are approved and exercised end to end. The included deterministic Mock SRM
+Flow covers SUCCESS, FAILED, and WAITING_HUMAN outcomes; WAITING_HUMAN uses the
+type-A model and does not resume the original server browser session.
 
 ## Requirements
 
@@ -50,6 +52,10 @@ Runtime, browser, Artifact, and error behavior are documented in
 The Mock SRM service, demo Flow package, and three-scenario browser harness are
 documented in [`docs/PHASE5_MOCK_SRM.md`](docs/PHASE5_MOCK_SRM.md).
 
+The ordered test-server deployment, Flow publication, Task data setup, and
+end-to-end acceptance checklist is in
+[`docs/PHASE5_TEST_SERVER_HANDOFF.md`](docs/PHASE5_TEST_SERVER_HANDOFF.md).
+
 Run all three Phase 5 scenarios locally with installed Chrome:
 
 ```powershell
@@ -81,7 +87,7 @@ Run all three Phase 5 scenarios locally with installed Chrome:
   test-environment context. These headers are not production authentication.
 - The Worker Pool and lease polling are disabled by default. Phase 3 live
   integration may enable registration/heartbeat only; lease polling requires a
-  Phase 4 Runtime Handler and the extended Task lease contract.
+  Phase 4 Runtime Handler and explicit approval for dedicated integration data.
 - Credential resolution is disabled by default. `mock_env` is restricted to
   development/test, one credential reference, one tenant, and one Portal
   account. It is only for the dedicated Mock SRM demonstration; production
@@ -89,6 +95,11 @@ Run all three Phase 5 scenarios locally with installed Chrome:
 
 ## Current integration boundaries
 
+- The 2026-07-16 read-only Task OpenAPI check confirms that
+  `WorkerLeaseResponse` contains the immutable execution snapshot consumed by
+  the Engine, renew returns `leaseExpiresAt`, and Worker Artifact upload URL is
+  `POST /worker-api/artifacts/upload-url`. This is schema validation, not a
+  successful register, heartbeat, lease, renew, or callback run.
 - Task dispatch uses an HTTP lease/renew compatibility source. Production Queue
   ack, visibility timeout, retry, and dead-letter behavior remain future work.
 - Event, Artifact, and finish callbacks are direct. The Callback Outbox schema
@@ -97,6 +108,10 @@ Run all three Phase 5 scenarios locally with installed Chrome:
   authentication. Worker service-account authentication remains required.
 - Python Flow modules currently run in the Engine process; static policy checks
   are not OS-level isolation.
+- Lease polling stays off until a dedicated binding/run is approved, its exact
+  active published Registry version and Mock credential/Portal scope are
+  prepared, and lease, renew, Artifact/event/finish callbacks complete a real
+  end-to-end test. Production authentication also remains required.
 
 ## Database hold point
 
