@@ -1,5 +1,7 @@
 # NoDeskClaw RPA Engine
 
+English | [简体中文](README.zh-CN.md)
+
 AutoTask product branch `v0.1` contains RPA Engine component version `0.5.0`.
 The Engine provides configuration, structured logs, health/readiness endpoints,
 the PostgreSQL and S3-compatible foundations, Flow Registry and versioned
@@ -30,6 +32,9 @@ type-A model and does not resume the original server browser session.
 Copy-Item .env.example .env
 .\.venv\Scripts\python.exe -m nodeskclaw_rpa_engine
 ```
+
+If Python is installed elsewhere, use `py -3.12 -m venv .venv` for the first
+command.
 
 The service listens on `127.0.0.1:4610` by default:
 
@@ -68,6 +73,7 @@ Run all three Phase 5 scenarios locally with installed Chrome:
 .\.venv\Scripts\python.exe -m pytest
 .\.venv\Scripts\python.exe -m ruff check .
 .\.venv\Scripts\python.exe -m mypy
+.\.venv\Scripts\python.exe -m pip check
 ```
 
 ## External dependency policy
@@ -79,8 +85,9 @@ Run all three Phase 5 scenarios locally with installed Chrome:
   seeds data automatically.
 - MinIO/S3 is disabled by default. When enabled, readiness checks the configured
   bucket; application startup never creates buckets.
-- Database passwords, MinIO keys, and service-account secrets belong only in a
-  local or deployed `.env`. They must not be committed or copied into logs.
+- Database passwords, MinIO keys, and service-account secrets must be supplied
+  through a local `.env`, deployment environment variables, or managed secret
+  injection. They must not be committed or copied into logs.
 - The current `TASK_AUTH_MODE=none` is a test-environment compatibility mode.
   Service-account token exchange is reserved for a later phase.
 - Phase 2 Flow API uses `X-Actor-Id` and optional `X-Tenant-Id` only as trusted
