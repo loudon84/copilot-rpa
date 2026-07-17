@@ -54,7 +54,6 @@ jobs:
       - name: 本地 Mock Flow 真实浏览器冒烟
         env:
           NO_PROXY: 127.0.0.1,localhost
-          no_proxy: 127.0.0.1,localhost
         run: >-
           python scripts/run_phase5_demo.py
           --start-mock-srm
