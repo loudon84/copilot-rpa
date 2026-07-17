@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import logging
 from datetime import UTC, datetime
 from typing import Protocol
@@ -14,12 +15,14 @@ from nodeskclaw_rpa_engine.workers.errors import (
     TaskApiError,
     WorkerConfigurationError,
 )
+from nodeskclaw_rpa_engine.workers.outbox import CallbackOutboxService
 from nodeskclaw_rpa_engine.workers.repository import (
     SqlAlchemyAttemptRepository,
     SqlAlchemyWorkerRepository,
 )
 from nodeskclaw_rpa_engine.workers.resolver import FlowVersionResolver
 from nodeskclaw_rpa_engine.workers.schemas import (
+    TERMINAL_ATTEMPT_STATUSES,
     AttemptStatus,
     LeaseRunCommand,
     ResolvedFlowVersion,
@@ -50,6 +53,7 @@ class WorkerPool:
         command_source: RunCommandSource | None = None,
         command_handler: RunCommandHandler | None = None,
         resolver: FlowVersionResolver | None = None,
+        callback_outbox: CallbackOutboxService | None = None,
     ) -> None:
         if settings.worker_lease_enabled and command_handler is None:
             raise WorkerConfigurationError(
@@ -65,6 +69,7 @@ class WorkerPool:
         self._source = command_source
         self._handler = command_handler
         self._resolver = resolver or FlowVersionResolver(settings, database)
+        self._callback_outbox = callback_outbox or CallbackOutboxService(database)
         self._worker_instance_id: UUID | None = None
         self._heartbeat_task: asyncio.Task[None] | None = None
         self._poll_task: asyncio.Task[None] | None = None
@@ -103,6 +108,7 @@ class WorkerPool:
                 max_concurrent_runs=self._settings.worker_max_concurrent_runs,
             )
             self._worker_instance_id = worker.id
+        await self._recover_interrupted_attempts()
         self._stopping = False
         self._heartbeat_task = asyncio.create_task(
             self._heartbeat_loop(),
@@ -118,7 +124,13 @@ class WorkerPool:
         if not self._settings.worker_enabled or self._worker_instance_id is None:
             return
         self._stopping = True
-        await self._set_worker_status(WorkerStatus.DRAINING)
+        try:
+            await self._set_worker_status(WorkerStatus.DRAINING)
+        except Exception:
+            logger.warning(
+                "Worker DRAINING status could not be persisted during shutdown",
+                extra={"workerId": self._settings.worker_id},
+            )
         for background in (self._poll_task, self._heartbeat_task):
             if background is not None:
                 background.cancel()
@@ -134,11 +146,38 @@ class WorkerPool:
             for task in pending:
                 task.cancel()
             if pending:
-                await asyncio.gather(*pending, return_exceptions=True)
-        await self._set_worker_status(WorkerStatus.OFFLINE, current_task_count=0)
+                cancel_wait_seconds = max(
+                    0.1,
+                    min(self._settings.worker_shutdown_grace_seconds, 5.0),
+                )
+                completed, stubborn = await asyncio.wait(
+                    pending,
+                    timeout=cancel_wait_seconds,
+                )
+                for task in completed:
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        task.result()
+                if stubborn:
+                    logger.error(
+                        "Runtime tasks ignored cancellation during Worker shutdown",
+                        extra={
+                            "workerId": self._settings.worker_id,
+                            "taskCount": len(stubborn),
+                        },
+                    )
+        try:
+            await self._set_worker_status(
+                WorkerStatus.OFFLINE,
+                current_task_count=0,
+            )
+        except Exception:
+            logger.warning(
+                "Worker OFFLINE status could not be persisted during shutdown",
+                extra={"workerId": self._settings.worker_id},
+            )
 
     async def dispatch(self, lease: LeaseRunCommand) -> bool:
-        """Dispatch a leased command. Exposed for deterministic Phase 3 tests."""
+        """调度已取得 Lease 的命令；该方法公开用于确定性 Phase 3 测试。"""
         if self._handler is None:
             raise WorkerConfigurationError("Runtime RunCommandHandler is unavailable")
         if lease.lease_id in self._active_tasks:
@@ -150,9 +189,7 @@ class WorkerPool:
             name=f"worker-run:{lease.run_id}:{lease.lease_id}",
         )
         self._active_tasks[lease.lease_id] = task
-        task.add_done_callback(
-            lambda _: self._active_tasks.pop(lease.lease_id, None)
-        )
+        task.add_done_callback(lambda _: self._active_tasks.pop(lease.lease_id, None))
         return True
 
     async def _heartbeat_loop(self) -> None:
@@ -169,9 +206,7 @@ class WorkerPool:
                     "Worker heartbeat failed",
                     extra={"workerId": self._settings.worker_id},
                 )
-            await asyncio.sleep(
-                self._settings.worker_heartbeat_interval_seconds
-            )
+            await asyncio.sleep(self._settings.worker_heartbeat_interval_seconds)
 
     async def _poll_loop(self) -> None:
         assert self._source is not None
@@ -191,45 +226,44 @@ class WorkerPool:
 
     async def _execute(self, lease: LeaseRunCommand) -> None:
         attempt_id: UUID | None = None
-        attempt_running = False
         try:
             if await self._lease_already_recorded(lease.lease_id):
                 return
             flow = await self._resolver.resolve(lease)
             assert self._worker_instance_id is not None
             async with self._database.session() as session, session.begin():
-                attempt, created = (
-                    await SqlAlchemyAttemptRepository(session).create_lease_attempt(
-                        lease_id=lease.lease_id,
-                        task_id=lease.task_id,
-                        run_id=lease.run_id,
-                        workflow_binding_id=lease.workflow_binding_id,
-                        portal_account_id=lease.portal_account_id,
-                        worker_instance_id=self._worker_instance_id,
-                        worker_id=self._settings.worker_id,
-                        flow_version_id=flow.flow_version_id,
-                        rpa_flow_id=flow.rpa_flow_id,
-                        rpa_flow_version=flow.version,
-                        package_checksum=flow.package_checksum,
-                        input_snapshot=lease.input,
-                        browser_session_snapshot=lease.config.browser_session.model_dump(
-                            mode="json", by_alias=True
-                        ),
-                    )
+                attempt, created = await SqlAlchemyAttemptRepository(
+                    session
+                ).create_lease_attempt(
+                    lease_id=lease.lease_id,
+                    task_id=lease.task_id,
+                    run_id=lease.run_id,
+                    workflow_binding_id=lease.workflow_binding_id,
+                    portal_account_id=lease.portal_account_id,
+                    worker_instance_id=self._worker_instance_id,
+                    worker_id=self._settings.worker_id,
+                    flow_version_id=flow.flow_version_id,
+                    rpa_flow_id=flow.rpa_flow_id,
+                    rpa_flow_version=flow.version,
+                    package_checksum=flow.package_checksum,
+                    input_snapshot=lease.input,
+                    browser_session_snapshot=lease.config.browser_session.model_dump(
+                        mode="json", by_alias=True
+                    ),
                 )
-                attempt_id = attempt.id
+            attempt_id = attempt.id
             if not created:
                 return
             self._validate_lease(lease)
             self._validate_flow_contract(lease, flow)
             self._validate_capabilities(flow.capabilities)
             await self._transition(attempt_id, AttemptStatus.RUNNING)
-            attempt_running = True
             await self._set_worker_status(
                 WorkerStatus.BUSY,
                 current_task_count=self.active_count,
             )
             await self._safe_event(
+                lease.lease_id,
                 lease.run_id,
                 RunEventRequest(
                     worker_id=self._settings.worker_id,
@@ -239,39 +273,39 @@ class WorkerPool:
                 ),
             )
             result = await self._handle_with_renewal(RunCommand(lease=lease, flow=flow))
-            await self._transition(
+            await self._complete_attempt(
                 attempt_id,
-                result.status,
+                run_id=lease.run_id,
+                status=result.status,
                 error_code=result.error_code,
                 error_message=result.error_message,
             )
-            try:
-                await self._task_client.finish(
-                    lease.run_id,
-                    RunFinishRequest(
-                        status=(
-                            AttemptStatus.FAILED
-                            if result.status is AttemptStatus.ABANDONED
-                            else result.status
-                        ),
-                        error_code=result.error_code,
-                        error_message=result.error_message,
-                    ),
+        except asyncio.CancelledError:
+            if attempt_id is not None:
+                await self._complete_after_cancellation(
+                    attempt_id,
+                    run_id=lease.run_id,
+                    error_code="WORKER_SHUTDOWN",
+                    error_message="Worker stopped before the run completed",
                 )
-            except TaskApiError:
-                logger.warning(
-                    "Run finish callback failed",
-                    extra={"runId": lease.run_id},
-                )
+            else:
+                await self._finish_unrecorded_after_cancellation(lease)
+            raise
         except RunCommandRejected as exc:
             if attempt_id is not None:
-                await self._fail_attempt(
+                await self._complete_attempt(
                     attempt_id,
-                    attempt_running=attempt_running,
+                    run_id=lease.run_id,
+                    status=AttemptStatus.FAILED,
                     error_code=exc.code,
                     error_message=exc.message,
                 )
-            await self._safe_finish_rejected(lease, exc.code, exc.message)
+            else:
+                await self._finish_unrecorded_rejection(
+                    lease,
+                    error_code=exc.code,
+                    error_message=exc.message,
+                )
         except Exception as exc:
             logger.exception(
                 "Worker command failed",
@@ -279,17 +313,19 @@ class WorkerPool:
             )
             if attempt_id is not None:
                 with contextlib.suppress(Exception):
-                    await self._fail_attempt(
+                    await self._complete_attempt(
                         attempt_id,
-                        attempt_running=attempt_running,
+                        run_id=lease.run_id,
+                        status=AttemptStatus.FAILED,
                         error_code="ENGINE_WORKER_ERROR",
                         error_message=type(exc).__name__,
                     )
-            await self._safe_finish_rejected(
-                lease,
-                "ENGINE_WORKER_ERROR",
-                "Engine Worker failed to process the command",
-            )
+            else:
+                await self._finish_unrecorded_rejection(
+                    lease,
+                    error_code="ENGINE_WORKER_ERROR",
+                    error_message="Engine Worker failed before attempt creation",
+                )
         finally:
             with contextlib.suppress(Exception):
                 next_status = (
@@ -303,6 +339,44 @@ class WorkerPool:
     async def _handle_with_renewal(self, command: RunCommand) -> RunResult:
         assert self._handler is not None
         execution = asyncio.create_task(self._handler.handle(command))
+        try:
+            return await self._monitor_execution(command, execution)
+        finally:
+            await self._cancel_runtime_child(execution, run_id=command.lease.run_id)
+
+    async def _cancel_runtime_child(
+        self,
+        execution: asyncio.Task[RunResult],
+        *,
+        run_id: str,
+    ) -> None:
+        if not execution.done():
+            execution.cancel()
+        wait_seconds = max(
+            0.1,
+            min(self._settings.worker_shutdown_grace_seconds, 5.0),
+        )
+        completed, _ = await asyncio.wait({execution}, timeout=wait_seconds)
+        if execution in completed:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                execution.result()
+            return
+        execution.add_done_callback(self._consume_background_result)
+        logger.error(
+            "Runtime child ignored cancellation; attempt cleanup will continue",
+            extra={"runId": run_id},
+        )
+
+    @staticmethod
+    def _consume_background_result(task: asyncio.Task[RunResult]) -> None:
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            task.result()
+
+    async def _monitor_execution(
+        self,
+        command: RunCommand,
+        execution: asyncio.Task[RunResult],
+    ) -> RunResult:
         expires_at = command.lease.lease_expires_at
         while True:
             now = datetime.now(UTC)
@@ -315,9 +389,6 @@ class WorkerPool:
             if execution in done:
                 return await execution
             if datetime.now(UTC) >= expires_at:
-                execution.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await execution
                 return RunResult(
                     status=AttemptStatus.ABANDONED,
                     error_code="LEASE_EXPIRED",
@@ -332,6 +403,43 @@ class WorkerPool:
                     "Lease renewal failed; execution will stop at lease expiry",
                     extra={"runId": command.lease.run_id},
                 )
+
+    async def _recover_interrupted_attempts(self) -> None:
+        recovered = 0
+        async with self._database.session() as session, session.begin():
+            repository = SqlAlchemyAttemptRepository(session)
+            attempts = await repository.list_active_for_worker(
+                self._settings.worker_id,
+                for_update=True,
+            )
+            for attempt in attempts:
+                if attempt.status == AttemptStatus.LEASED.value:
+                    await repository.transition(attempt, AttemptStatus.RUNNING)
+                await repository.transition(
+                    attempt,
+                    AttemptStatus.ABANDONED,
+                    error_code="WORKER_RESTART_RECOVERY",
+                    error_message="Worker restarted before the attempt completed",
+                )
+                await self._callback_outbox.enqueue_finish(
+                    session,
+                    attempt=attempt,
+                    run_id=attempt.run_id,
+                    request=RunFinishRequest(
+                        status=AttemptStatus.FAILED,
+                        error_code="WORKER_RESTART_RECOVERY",
+                        error_message=("Worker restarted before the attempt completed"),
+                    ),
+                )
+                recovered += 1
+        if recovered:
+            logger.warning(
+                "Interrupted Worker attempts were recovered",
+                extra={
+                    "workerId": self._settings.worker_id,
+                    "attemptCount": recovered,
+                },
+            )
 
     async def _transition(
         self,
@@ -353,22 +461,84 @@ class WorkerPool:
                 error_message=error_message,
             )
 
-    async def _fail_attempt(
+    async def _complete_attempt(
         self,
         attempt_id: UUID,
         *,
-        attempt_running: bool,
+        run_id: str,
+        status: AttemptStatus,
+        error_code: str | None,
+        error_message: str | None,
+    ) -> None:
+        async with self._database.session() as session, session.begin():
+            repository = SqlAlchemyAttemptRepository(session)
+            attempt = await repository.get_by_id(attempt_id, for_update=True)
+            if attempt is None:
+                raise LookupError("Execution attempt was not found")
+
+            current_status = AttemptStatus(attempt.status)
+            if current_status in TERMINAL_ATTEMPT_STATUSES:
+                terminal_status = current_status
+                terminal_error_code = attempt.error_code
+                terminal_error_message = attempt.error_message
+            else:
+                if (
+                    current_status is AttemptStatus.LEASED
+                    and status is AttemptStatus.FAILED
+                ):
+                    await repository.transition(attempt, AttemptStatus.RUNNING)
+                await repository.transition(
+                    attempt,
+                    status,
+                    error_code=error_code,
+                    error_message=error_message,
+                )
+                terminal_status = status
+                terminal_error_code = error_code
+                terminal_error_message = error_message
+
+            await self._callback_outbox.enqueue_finish(
+                session,
+                attempt=attempt,
+                run_id=run_id,
+                request=RunFinishRequest(
+                    status=(
+                        AttemptStatus.FAILED
+                        if terminal_status is AttemptStatus.ABANDONED
+                        else terminal_status
+                    ),
+                    error_code=terminal_error_code,
+                    error_message=terminal_error_message,
+                ),
+            )
+
+    async def _complete_after_cancellation(
+        self,
+        attempt_id: UUID,
+        *,
+        run_id: str,
         error_code: str,
         error_message: str,
     ) -> None:
-        if not attempt_running:
-            await self._transition(attempt_id, AttemptStatus.RUNNING)
-        await self._transition(
-            attempt_id,
-            AttemptStatus.FAILED,
-            error_code=error_code,
-            error_message=error_message,
+        completion = asyncio.create_task(
+            self._complete_attempt(
+                attempt_id,
+                run_id=run_id,
+                status=AttemptStatus.ABANDONED,
+                error_code=error_code,
+                error_message=error_message,
+            )
         )
+        try:
+            await asyncio.shield(completion)
+        except asyncio.CancelledError:
+            with contextlib.suppress(Exception):
+                await completion
+        except Exception:
+            logger.exception(
+                "Cancelled attempt could not be persisted",
+                extra={"runId": run_id},
+            )
 
     async def _lease_already_recorded(self, lease_id: str) -> bool:
         async with self._database.session() as session:
@@ -437,24 +607,65 @@ class WorkerPool:
                 "The exact Flow version does not support the workflow code",
             )
 
-    async def _safe_event(self, run_id: str, request: RunEventRequest) -> None:
+    async def _safe_event(
+        self,
+        lease_id: str,
+        run_id: str,
+        request: RunEventRequest,
+    ) -> None:
         try:
-            await self._task_client.event(run_id, request)
-        except TaskApiError:
-            logger.warning("Run event callback failed", extra={"runId": run_id})
+            await self._callback_outbox.enqueue_event_for_lease(
+                lease_id=lease_id,
+                run_id=run_id,
+                request=request,
+                idempotency_key=f"rpa:lease:{lease_id}:run-started",
+            )
+        except Exception:
+            logger.warning("Run event could not be persisted", extra={"runId": run_id})
 
-    async def _safe_finish_rejected(
+    async def _finish_unrecorded_rejection(
         self,
         lease: LeaseRunCommand,
-        code: str,
-        message: str,
+        *,
+        error_code: str,
+        error_message: str,
     ) -> None:
-        with contextlib.suppress(TaskApiError):
+        identity = f"{lease.run_id}\0{lease.lease_id}".encode()
+        digest = hashlib.sha256(identity).hexdigest()
+        try:
             await self._task_client.finish(
                 lease.run_id,
                 RunFinishRequest(
                     status=AttemptStatus.FAILED,
-                    error_code=code,
-                    error_message=message,
+                    error_code=error_code,
+                    error_message=error_message,
                 ),
+                idempotency_key=f"rpa:unrecorded-finish:{digest}",
+            )
+        except TaskApiError:
+            logger.warning(
+                "Unrecorded rejected run finish callback failed",
+                extra={"runId": lease.run_id, "errorCode": error_code},
+            )
+
+    async def _finish_unrecorded_after_cancellation(
+        self,
+        lease: LeaseRunCommand,
+    ) -> None:
+        completion = asyncio.create_task(
+            self._finish_unrecorded_rejection(
+                lease,
+                error_code="WORKER_SHUTDOWN",
+                error_message="Worker stopped before attempt creation",
+            )
+        )
+        try:
+            await asyncio.shield(completion)
+        except asyncio.CancelledError:
+            with contextlib.suppress(Exception):
+                await completion
+        except Exception:
+            logger.warning(
+                "Unrecorded cancelled run finish callback failed",
+                extra={"runId": lease.run_id},
             )

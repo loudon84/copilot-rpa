@@ -13,34 +13,49 @@ jobs:
   quality:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out repository
+      - name: 检出仓库
         uses: actions/checkout@v7
 
-      - name: Set up Python 3.12
+      - name: 配置 Python 3.12
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
 
-      - name: Reject private test-server defaults
+      - name: 拒绝私有测试地址默认值
         shell: bash
         run: |
           if git grep -n '192\.168\.102\.247'; then
-            echo 'Private test-server addresses must stay in local configuration.'
+            echo '私有测试服务器地址只能保存在本地配置中。'
             exit 1
           fi
 
-      - name: Install project and development dependencies
+      - name: 安装项目与开发依赖
         run: python -m pip install -e ".[dev]"
 
-      - name: Ruff
+      - name: Ruff 静态检查
         run: ruff check .
 
-      - name: Mypy
+      - name: Mypy 类型检查
         run: mypy
 
-      - name: Pytest
+      - name: Pytest 测试
         run: pytest
 
-      - name: Dependency consistency
+      - name: 依赖一致性检查
         run: python -m pip check
+
+      - name: 安装 Chromium 系统依赖
+        run: python -m playwright install-deps chromium
+
+      - name: 安装 Chromium 浏览器
+        run: python -m playwright install chromium
+
+      - name: 本地 Mock Flow 真实浏览器冒烟
+        env:
+          NO_PROXY: 127.0.0.1,localhost
+          no_proxy: 127.0.0.1,localhost
+        run: >-
+          python scripts/run_phase5_demo.py
+          --start-mock-srm
+          --channel chromium

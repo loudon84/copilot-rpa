@@ -13,7 +13,7 @@ from nodeskclaw_rpa_engine.runtime.errors import RpaFatalError
 
 
 class MockEnvironmentCredentialResolver:
-    """Resolve one development-only credential within an exact command scope."""
+    """在精确命令作用域内解析一组仅供开发使用的凭据。"""
 
     __slots__ = (
         "_allowed_portal_account_id",
@@ -75,7 +75,7 @@ class MockEnvironmentCredentialResolver:
 
 
 def build_credential_resolver(settings: Settings) -> CredentialResolver:
-    """Build the configured resolver without exposing secret values."""
+    """构建已配置的解析器，且不暴露秘密值。"""
     if settings.credential_resolver_mode is CredentialResolverMode.DISABLED:
         return DisabledCredentialResolver()
 

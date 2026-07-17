@@ -1,1 +1,1 @@
-"""Flow Registry, validation, and package management."""
+"""Flow Registry、校验和包管理。"""

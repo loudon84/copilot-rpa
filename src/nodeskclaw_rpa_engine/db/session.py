@@ -19,7 +19,7 @@ class DatabaseConfigurationError(ValueError):
 
 
 class DatabaseManager:
-    """Owns the Engine pool without creating, migrating, or seeding any tables."""
+    """管理 Engine 连接池，但不会创建、迁移任何表或写入种子数据。"""
 
     def __init__(
         self,
@@ -74,7 +74,7 @@ class DatabaseManager:
                 raise
 
     async def check(self) -> None:
-        """Run a read-only liveness query only when DB readiness is enabled."""
+        """仅在启用数据库 readiness 时执行只读存活查询。"""
         async with self._engine.connect() as connection:
             await connection.execute(text("SELECT 1"))
 

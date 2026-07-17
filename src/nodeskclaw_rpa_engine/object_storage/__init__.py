@@ -1,1 +1,1 @@
-"""S3-compatible object-storage abstractions."""
+"""S3 兼容的对象存储抽象。"""

@@ -1,0 +1,19 @@
+{
+  "username": "[data-rpa='login-username']",
+  "password": "[data-rpa='login-password']",
+  "captcha": "[data-rpa='login-captcha']",
+  "captcha_image": "img[data-rpa='login-captcha-image']",
+  "agreement": "[data-rpa='login-agreement'] input[type='checkbox']",
+  "login_button": "button[data-rpa='login-submit']",
+  "login_error": ".el-message--error",
+  "login_success": "[data-rpa='portal-env-tag']",
+  "order_page": "[data-rpa='order-list-page']",
+  "po_number": "[data-rpa='order-no-input']",
+  "search_button": "[data-rpa='order-search-btn']",
+  "order_row": "[data-rpa='order-row-{po_no}']:visible",
+  "order_detail": "[data-rpa='order-detail-{po_no}']:visible",
+  "detail_page": "[data-rpa='order-detail-page']",
+  "detail_po_number": "[data-rpa='order-detail-no-{po_no}']:visible",
+  "download_order": "[data-rpa='order-detail-download-btn']",
+  "download_confirm": "[data-rpa='download-confirm-btn']"
+}

@@ -1,0 +1,25 @@
+[Unit]
+Description=NoDeskClaw RPA Engine 服务
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=nodeskclaw-rpa
+Group=nodeskclaw-rpa
+WorkingDirectory=/opt/nodeskclaw-rpa-engine
+EnvironmentFile=/etc/nodeskclaw-rpa-engine/engine.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PLAYWRIGHT_BROWSERS_PATH=/var/lib/nodeskclaw-rpa-engine/ms-playwright
+ExecStart=/opt/nodeskclaw-rpa-engine/.venv/bin/python -m nodeskclaw_rpa_engine
+Restart=on-failure
+RestartSec=5s
+KillSignal=SIGTERM
+TimeoutStopSec=60s
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nodeskclaw-rpa-engine
+
+[Install]
+WantedBy=multi-user.target

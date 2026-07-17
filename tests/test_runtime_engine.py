@@ -5,6 +5,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
+
 from nodeskclaw_rpa_engine.core.config import Settings
 from nodeskclaw_rpa_engine.flows.manifest import FlowManifest
 from nodeskclaw_rpa_engine.runtime.artifacts import ArtifactType
@@ -332,3 +334,44 @@ async def test_runtime_injects_credentials_from_governed_resolver(tmp_path) -> N
         "portal-1",
     )
     assert observed["username"] == "demo-user"
+
+
+def test_runtime_work_directory_probe_round_trips_file(tmp_path) -> None:
+    run_directory = tmp_path / "runs" / "run-1" / "lease-1"
+
+    RpaRuntime._probe_work_directory(run_directory)
+
+    assert run_directory.is_dir()
+    assert list(run_directory.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_code"),
+    [
+        (PermissionError("work directory denied"), "RUNTIME_WORKDIR_ACCESS_DENIED"),
+        (OSError("work directory failed"), "RUNTIME_WORKDIR_WRITE_FAILED"),
+    ],
+)
+async def test_runtime_maps_work_directory_probe_errors(
+    tmp_path,
+    monkeypatch,
+    error: OSError,
+    expected_code: str,
+) -> None:
+    async def flow(_ctx) -> None:
+        raise AssertionError("Flow must not execute")
+
+    handler, browser, _, events = runtime(tmp_path, flow)
+
+    def fail_probe(_path: Path) -> None:
+        raise error
+
+    monkeypatch.setattr(handler, "_probe_work_directory", fail_probe)
+
+    result = await handler.handle(command())
+
+    assert result.status is AttemptStatus.FAILED
+    assert result.error_code == expected_code
+    assert browser.starts == 0
+    assert events.items[-1]["type"] == "RUNTIME_FAILED"
+    assert events.items[-1]["payload"] == {"errorCode": expected_code}

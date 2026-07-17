@@ -11,7 +11,11 @@ from nodeskclaw_rpa_engine.db.models import (
     RpaExecutionAttempt,
     RpaWorkerInstance,
 )
-from nodeskclaw_rpa_engine.workers.schemas import AttemptStatus, WorkerStatus
+from nodeskclaw_rpa_engine.workers.schemas import (
+    TERMINAL_ATTEMPT_STATUSES,
+    AttemptStatus,
+    WorkerStatus,
+)
 
 
 class SqlAlchemyWorkerRepository:
@@ -168,6 +172,26 @@ class SqlAlchemyAttemptRepository:
             statement = statement.with_for_update()
         return (await self._session.execute(statement)).scalar_one_or_none()
 
+    async def list_active_for_worker(
+        self,
+        worker_id: str,
+        *,
+        for_update: bool = False,
+    ) -> Sequence[RpaExecutionAttempt]:
+        statement = (
+            select(RpaExecutionAttempt)
+            .where(
+                RpaExecutionAttempt.worker_id == worker_id,
+                RpaExecutionAttempt.status.in_(
+                    [AttemptStatus.LEASED.value, AttemptStatus.RUNNING.value]
+                ),
+            )
+            .order_by(RpaExecutionAttempt.received_at, RpaExecutionAttempt.id)
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        return (await self._session.execute(statement)).scalars().all()
+
     async def create_lease_attempt(
         self,
         *,
@@ -189,7 +213,7 @@ class SqlAlchemyAttemptRepository:
         if existing is not None:
             return existing, False
 
-        # Serialize attempt numbering for a run without adding a new table/sequence.
+        # 不新增表或序列，使用事务锁串行生成同一 Run 的 attempt 编号。
         await self._session.execute(
             text("SELECT pg_advisory_xact_lock(hashtextextended(:run_id, 0))"),
             {"run_id": run_id},
@@ -235,9 +259,18 @@ class SqlAlchemyAttemptRepository:
         error_message: str | None = None,
         error_details: dict[str, object] | None = None,
     ) -> None:
+        now = datetime.now(UTC)
         attempt.status = status.value
         attempt.error_code = error_code
         attempt.error_message = error_message
         attempt.error_details = error_details or {}
-        attempt.updated_at = datetime.now(UTC)
+        if status is AttemptStatus.RUNNING and attempt.started_at is None:
+            attempt.started_at = now
+        if status in TERMINAL_ATTEMPT_STATUSES:
+            attempt.ended_at = (
+                max(now, attempt.started_at) if attempt.started_at is not None else now
+            )
+        else:
+            attempt.ended_at = None
+        attempt.updated_at = now
         await self._session.flush()

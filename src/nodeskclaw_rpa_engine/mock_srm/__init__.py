@@ -1,4 +1,4 @@
-"""Deterministic Mock SRM portal used by the Phase 5 demo Flow."""
+"""供 Phase 5 演示 Flow 使用的确定性 Mock SRM Portal。"""
 
 from nodeskclaw_rpa_engine.mock_srm.app import app, create_mock_srm_app
 

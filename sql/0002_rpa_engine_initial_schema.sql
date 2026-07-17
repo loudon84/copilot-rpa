@@ -1,6 +1,6 @@
--- DORMANT BASELINE DDL - DO NOT RUN AGAINST THE EXISTING TEST DATABASE.
--- The existing nodeskclaw_task.rpa_engine schema must be Alembic-stamped,
--- not upgraded through this revision. This SQL is for a fresh database only.
+-- 休眠基线 DDL——禁止对现有测试数据库执行。
+-- 现有 nodeskclaw_task.rpa_engine Schema 必须执行 Alembic stamp，
+-- 不得通过此修订执行 upgrade。此 SQL 仅适用于全新数据库。
 
 CREATE SCHEMA IF NOT EXISTS rpa_engine AUTHORIZATION task_user;
 

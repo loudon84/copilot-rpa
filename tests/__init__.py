@@ -1,1 +1,1 @@
-"""Test package for cross-platform helper imports."""
+"""用于跨平台辅助模块导入的测试包。"""

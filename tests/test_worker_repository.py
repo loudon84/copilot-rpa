@@ -15,23 +15,32 @@ from nodeskclaw_rpa_engine.workers.schemas import AttemptStatus, WorkerStatus
 
 
 class FakeResult:
-    def __init__(self, scalar=None) -> None:
+    def __init__(self, scalar=None, values=None) -> None:
         self.scalar = scalar
+        self.values = list(values or [])
 
     def scalar_one(self):
         return self.scalar
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self.values
 
 
 class FakeSession:
     def __init__(self, results=None) -> None:
         self.results = list(results or [])
         self.added: list[object] = []
+        self.statements: list[object] = []
         self.flushes = 0
 
     def add(self, value: object) -> None:
         self.added.append(value)
 
-    async def execute(self, *_args, **_kwargs):
+    async def execute(self, statement, *_args, **_kwargs):
+        self.statements.append(statement)
         return self.results.pop(0)
 
     async def flush(self) -> None:
@@ -158,5 +167,28 @@ async def test_attempt_number_increments_and_state_transition_flushes() -> None:
     assert created is True
     assert attempt.attempt_no == 3
     assert attempt.status == "SUCCESS"
+    assert attempt.started_at is not None
+    assert attempt.ended_at is not None
+    assert attempt.ended_at >= attempt.started_at
     assert session.added == [attempt]
     assert session.flushes == 3
+
+
+async def test_active_attempt_query_is_scoped_and_locked_for_recovery() -> None:
+    active = [
+        RpaExecutionAttempt(id=uuid4(), status=AttemptStatus.LEASED.value),
+        RpaExecutionAttempt(id=uuid4(), status=AttemptStatus.RUNNING.value),
+    ]
+    session = FakeSession([FakeResult(values=active)])
+    repository = SqlAlchemyAttemptRepository(session)  # type: ignore[arg-type]
+
+    result = await repository.list_active_for_worker(
+        "worker-1",
+        for_update=True,
+    )
+
+    assert list(result) == active
+    sql = str(session.statements[0])
+    assert "worker_id" in sql
+    assert "status IN" in sql
+    assert "FOR UPDATE" in sql

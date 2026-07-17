@@ -1,1 +1,1 @@
-"""Core configuration, logging, and health services."""
+"""核心配置、日志和健康检查服务。"""

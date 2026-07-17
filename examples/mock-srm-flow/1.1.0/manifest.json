@@ -1,0 +1,28 @@
+{
+  "rpaFlowId": "rpa_flow_mock_srm_fetch_po",
+  "name": "Supplier Portal Purchase Order Download",
+  "version": "1.1.0",
+  "engineType": "PLAYWRIGHT_CDP",
+  "entrypoint": "flow.py:run",
+  "supportedWorkflowCodes": [
+    "srm_fetch_po"
+  ],
+  "supportedPortalTypes": [
+    "MOCK_SRM"
+  ],
+  "inputSchema": [
+    {
+      "name": "po_no",
+      "type": "string",
+      "required": true,
+      "description": "Purchase order number to find and download"
+    }
+  ],
+  "capabilities": [
+    "PLAYWRIGHT_CDP",
+    "BROWSER_SESSION_MANAGED",
+    "SCREENSHOT",
+    "DOWNLOAD"
+  ],
+  "minimumEngineVersion": "0.5.0"
+}

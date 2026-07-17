@@ -1,0 +1,803 @@
+{
+  "info": {
+    "_postman_id": "9a5123a1-47b9-4dfa-8d9b-04cce26ff449",
+    "name": "AutoTask RPA Engine v0.5.0",
+    "description": "RPA Engine v0.5.0 统一接口集合，共覆盖 17 个业务路由。\n\n推荐顺序：Health -> Flow Discovery -> Binding Contract -> Worker Observability。首次部署 Flow 时，再显式开启 Registry Write 请求。Lifecycle 目录只允许逐条人工执行。\n\n集合只包含 Engine 入站接口。Task 点击运行后，由 Engine 主动轮询 Task Worker API；Engine 不提供入站 /run 接口。\n\n导入后请把 engine_base_url 改为实际 Engine 地址。当前接口采用 noauth，X-Actor-Id 仅用于测试审计上下文。",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "noauth"
+  },
+  "variable": [
+    {
+      "key": "engine_base_url",
+      "value": "http://localhost:4610",
+      "type": "string"
+    },
+    {
+      "key": "actor_id",
+      "value": "postman-task-integration",
+      "type": "string"
+    },
+    {
+      "key": "tenant_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "flow_scope",
+      "value": "GLOBAL",
+      "type": "string"
+    },
+    {
+      "key": "flow_id",
+      "value": "rpa_flow_mock_srm_fetch_po",
+      "type": "string"
+    },
+    {
+      "key": "flow_version",
+      "value": "1.1.0",
+      "type": "string"
+    },
+    {
+      "key": "flow_version_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "target_flow_version_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "workflow_code",
+      "value": "srm_fetch_po",
+      "type": "string"
+    },
+    {
+      "key": "package_checksum",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "worker_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "worker_status",
+      "value": "ONLINE",
+      "type": "string"
+    },
+    {
+      "key": "capability",
+      "value": "PLAYWRIGHT_CDP",
+      "type": "string"
+    },
+    {
+      "key": "limit",
+      "value": "50",
+      "type": "string"
+    },
+    {
+      "key": "offset",
+      "value": "0",
+      "type": "string"
+    },
+    {
+      "key": "change_reason",
+      "value": "Task integration Postman test",
+      "type": "string"
+    },
+    {
+      "key": "allow_registry_writes",
+      "value": "false",
+      "type": "string"
+    },
+    {
+      "key": "allow_lifecycle_changes",
+      "value": "false",
+      "type": "string"
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const actorId = (pm.collectionVariables.get('actor_id') || '').trim();",
+          "if (!actorId) {",
+          "  throw new Error('actor_id is required');",
+          "}",
+          "pm.request.headers.upsert({ key: 'X-Actor-Id', value: actorId });",
+          "pm.request.headers.upsert({ key: 'Accept', value: 'application/json' });",
+          "const tenantId = (pm.collectionVariables.get('tenant_id') || '').trim();",
+          "pm.request.headers.remove('X-Tenant-Id');",
+          "if (tenantId) {",
+          "  pm.request.headers.upsert({ key: 'X-Tenant-Id', value: tenantId });",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "00 Health",
+      "description": "先执行这两个请求。ready 必须为 200，并且所有 required=true 的依赖均为 healthy。",
+      "item": [
+        {
+          "name": "Live - 存活检查",
+          "request": {
+            "method": "GET",
+            "description": "仅检查 Engine 进程是否存活。",
+            "url": "{{engine_base_url}}/health/live"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Engine is alive', function () {",
+                  "  pm.expect(body.status).to.eql('alive');",
+                  "  pm.expect(body.service).to.be.a('string').and.not.empty;",
+                  "  pm.expect(body.version).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ready - 依赖就绪检查",
+          "request": {
+            "method": "GET",
+            "description": "检查数据库、对象存储和 Task API。启用且 required=true 的依赖不可用时返回 503。",
+            "url": "{{engine_base_url}}/health/ready"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Engine and required dependencies are ready', function () {",
+                  "  pm.expect(body.status).to.eql('ready');",
+                  "  pm.expect(body.dependencies).to.be.an('object');",
+                  "  Object.values(body.dependencies)",
+                  "    .filter(function (dependency) { return dependency.required === true; })",
+                  "    .forEach(function (dependency) { pm.expect(dependency.state).to.eql('healthy'); });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "01 Flow Discovery",
+      "description": "只读查询。List Flow versions 会根据 flow_version 自动保存精确 flow_version_id 和 package_checksum。",
+      "item": [
+        {
+          "name": "List Flows - 查询 Flow",
+          "request": {
+            "method": "GET",
+            "description": "支持 scope、status、search、limit 和 offset。这里保留最稳定的分页与 scope 参数。",
+            "url": "{{engine_base_url}}/api/v1/flows?scope={{flow_scope}}&limit={{limit}}&offset={{offset}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('Flow list contract', function () {",
+                  "  pm.expect(body.items).to.be.an('array');",
+                  "  pm.expect(body.total).to.be.a('number');",
+                  "  pm.expect(body.limit).to.be.a('number');",
+                  "  pm.expect(body.offset).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Flow Detail - Flow 详情",
+          "request": {
+            "method": "GET",
+            "description": "查询配置变量 flow_id 对应的 Flow 及全部版本。",
+            "url": "{{engine_base_url}}/api/v1/flows/{{flow_id}}?scope={{flow_scope}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('Flow detail matches configured ID', function () {",
+                  "  pm.expect(body.rpaFlowId).to.eql(pm.collectionVariables.get('flow_id'));",
+                  "  pm.expect(body.versions).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Flow Versions - 查询并保存版本快照",
+          "request": {
+            "method": "GET",
+            "description": "按 flow_version 查找版本，并保存 flow_version_id 与 package_checksum，供后续请求使用。",
+            "url": "{{engine_base_url}}/api/v1/flows/{{flow_id}}/versions?scope={{flow_scope}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "const requestedVersion = pm.collectionVariables.get('flow_version');",
+                  "const selected = body.items.find(function (item) { return item.version === requestedVersion; });",
+                  "pm.test('Configured Flow version exists', function () {",
+                  "  pm.expect(body.items).to.be.an('array');",
+                  "  pm.expect(selected, 'flow_version=' + requestedVersion).to.be.an('object');",
+                  "});",
+                  "pm.collectionVariables.set('flow_version_id', selected.rpaFlowVersionId);",
+                  "pm.collectionVariables.set('package_checksum', selected.packageChecksum || '');"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 Registry Write",
+      "description": "这些请求会写入 Flow Registry。默认跳过；确认使用专用测试包后，将 allow_registry_writes 设置为 true。",
+      "item": [
+        {
+          "name": "Upload Flow Package - 上传 ZIP",
+          "description": "在 package 文件控件中手动选择 ZIP。不要手工设置 multipart Content-Type 或 boundary。",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.collectionVariables.get('allow_registry_writes') !== 'true') {",
+                  "  pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', function () { pm.response.to.have.status(201); });",
+                  "const body = pm.response.json();",
+                  "pm.test('Upload response contains Flow, version and validation', function () {",
+                  "  pm.expect(body.flow.rpaFlowId).to.be.a('string').and.not.empty;",
+                  "  pm.expect(body.version.rpaFlowVersionId).to.be.a('string').and.not.empty;",
+                  "  pm.expect(body.validation.status).to.eql('PASSED');",
+                  "});",
+                  "pm.collectionVariables.set('flow_id', body.flow.rpaFlowId);",
+                  "pm.collectionVariables.set('flow_version', body.version.version);",
+                  "pm.collectionVariables.set('flow_version_id', body.version.rpaFlowVersionId);",
+                  "pm.collectionVariables.set('package_checksum', body.version.packageChecksum || '');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "package",
+                  "type": "file",
+                  "src": [],
+                  "description": "手动选择符合 Flow 规范的 ZIP"
+                },
+                {
+                  "key": "scope",
+                  "type": "text",
+                  "value": "{{flow_scope}}"
+                },
+                {
+                  "key": "description",
+                  "type": "text",
+                  "value": "Task integration Postman upload"
+                },
+                {
+                  "key": "labels",
+                  "type": "text",
+                  "value": "[\"task-integration\",\"postman\"]"
+                }
+              ]
+            },
+            "url": "{{engine_base_url}}/api/v1/flows/packages"
+          }
+        },
+        {
+          "name": "Validate Flow Version - 重新校验包",
+          "description": "从对象存储重新下载版本包并产生一条校验记录。",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.collectionVariables.get('allow_registry_writes') !== 'true') {",
+                  "  pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('Validation passed for configured version', function () {",
+                  "  pm.expect(body.flowVersionId).to.eql(pm.collectionVariables.get('flow_version_id'));",
+                  "  pm.expect(body.status).to.eql('PASSED');",
+                  "  pm.expect(body.errors).to.be.an('array').that.is.empty;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{engine_base_url}}/api/v1/flow-versions/{{flow_version_id}}/validate"
+          }
+        },
+        {
+          "name": "Publish Flow Version - 发布版本",
+          "description": "仅对已经校验通过的 DRAFT 版本执行。",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.collectionVariables.get('allow_registry_writes') !== 'true') {",
+                  "  pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('Flow version is published with checksum', function () {",
+                  "  pm.expect(body.rpaFlowVersionId).to.eql(pm.collectionVariables.get('flow_version_id'));",
+                  "  pm.expect(body.status).to.eql('PUBLISHED');",
+                  "  pm.expect(body.packageChecksum).to.be.a('string').and.not.empty;",
+                  "});",
+                  "pm.collectionVariables.set('package_checksum', body.packageChecksum);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"{{change_reason}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{engine_base_url}}/api/v1/flow-versions/{{flow_version_id}}/publish"
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 Binding Contract",
+      "description": "Task 创建或更新 WorkflowBinding 时必须校验精确版本。权威快照位于响应的 version 对象。",
+      "item": [
+        {
+          "name": "Get Flow Version - 精确版本详情",
+          "request": {
+            "method": "GET",
+            "description": "按 UUID 查询版本，核对版本号、发布状态和 checksum。",
+            "url": "{{engine_base_url}}/api/v1/flow-versions/{{flow_version_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('Exact Flow version matches collection variables', function () {",
+                  "  pm.expect(body.rpaFlowVersionId).to.eql(pm.collectionVariables.get('flow_version_id'));",
+                  "  pm.expect(body.rpaFlowId).to.eql(pm.collectionVariables.get('flow_id'));",
+                  "  pm.expect(body.version).to.eql(pm.collectionVariables.get('flow_version'));",
+                  "  pm.expect(body.packageChecksum).to.be.a('string').and.not.empty;",
+                  "});",
+                  "pm.collectionVariables.set('package_checksum', body.packageChecksum);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Validate Binding - Task 精确绑定校验",
+          "request": {
+            "method": "POST",
+            "description": "推荐按 rpaFlowVersionId 校验。兼容方式可改为 rpaFlowId + rpaFlowVersion；两种引用方式不能同时发送。接口即使校验失败仍返回 HTTP 200，应检查 valid 和 reasonCode。",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rpaFlowVersionId\": \"{{flow_version_id}}\",\n  \"workflowCode\": \"{{workflow_code}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{engine_base_url}}/api/v1/flow-versions/validate-binding"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('Binding is valid and uses the exact published version', function () {",
+                  "  pm.expect(body.valid, body.reasonCode || 'binding invalid').to.eql(true);",
+                  "  pm.expect(body.version).to.be.an('object');",
+                  "  pm.expect(body.version.rpaFlowVersionId).to.eql(pm.collectionVariables.get('flow_version_id'));",
+                  "  pm.expect(body.version.status).to.eql('PUBLISHED');",
+                  "  pm.expect(body.version.packageChecksum).to.be.a('string').and.not.empty;",
+                  "});",
+                  "const expectedChecksum = pm.collectionVariables.get('package_checksum');",
+                  "if (expectedChecksum) {",
+                  "  pm.test('Binding checksum matches the selected version', function () {",
+                  "    pm.expect(body.version.packageChecksum).to.eql(expectedChecksum);",
+                  "  });",
+                  "}",
+                  "pm.collectionVariables.set('package_checksum', body.version.packageChecksum);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "04 Worker Observability",
+      "description": "只读观察 Engine Worker。列表请求会保存匹配条件的第一个 worker_id。",
+      "item": [
+        {
+          "name": "List Workers - Worker 列表",
+          "request": {
+            "method": "GET",
+            "description": "按状态和 capability 查询 Worker，并保存第一个匹配项。",
+            "url": "{{engine_base_url}}/api/v1/workers?status={{worker_status}}&capability={{capability}}&limit={{limit}}&offset={{offset}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('Worker list contract and at least one match', function () {",
+                  "  pm.expect(body.items).to.be.an('array').and.not.empty;",
+                  "  pm.expect(body.total).to.be.a('number');",
+                  "  pm.expect(body.limit).to.be.a('number');",
+                  "  pm.expect(body.offset).to.be.a('number');",
+                  "});",
+                  "const configured = pm.collectionVariables.get('worker_id');",
+                  "const selected = body.items.find(function (item) { return item.workerId === configured; }) || body.items[0];",
+                  "pm.collectionVariables.set('worker_id', selected.workerId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Worker - Worker 详情",
+          "request": {
+            "method": "GET",
+            "description": "核对状态、能力和最近心跳。",
+            "url": "{{engine_base_url}}/api/v1/workers/{{worker_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('Worker detail contract', function () {",
+                  "  pm.expect(body.workerId).to.eql(pm.collectionVariables.get('worker_id'));",
+                  "  pm.expect(body.status).to.be.a('string').and.not.empty;",
+                  "  pm.expect(body.capabilities).to.be.an('array');",
+                  "  pm.expect(body.lastHeartbeatAt).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "05 Package",
+      "description": "只检查 Engine 返回的临时下载跳转，不跟随跳转，也不保存 Location。",
+      "item": [
+        {
+          "name": "Get Package Redirect - 包下载跳转",
+          "protocolProfileBehavior": {
+            "followRedirects": false
+          },
+          "request": {
+            "method": "GET",
+            "description": "预期 HTTP 307，Location 为短期有效地址。不要复制到日志或测试快照。",
+            "url": "{{engine_base_url}}/api/v1/flow-versions/{{flow_version_id}}/package"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 307', function () { pm.response.to.have.status(307); });",
+                  "pm.test('Redirect contains Location', function () {",
+                  "  pm.expect(pm.response.headers.get('Location')).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "90 Lifecycle - Manual",
+      "description": "高风险状态变更。默认全部跳过；仅在专用测试版本上把 allow_lifecycle_changes 设置为 true，并逐条人工执行。不要用 Collection Runner 连续执行本目录。",
+      "item": [
+        {
+          "name": "Rollback Flow - 回滚发布版本",
+          "description": "target_flow_version_id 必须指向准备重新发布的旧版本。",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.collectionVariables.get('allow_lifecycle_changes') !== 'true') {",
+                  "  pm.execution.skipRequest();",
+                  "}",
+                  "if (!(pm.collectionVariables.get('target_flow_version_id') || '').trim()) {",
+                  "  throw new Error('target_flow_version_id is required');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('Target version is published', function () {",
+                  "  pm.expect(body.rpaFlowVersionId).to.eql(pm.collectionVariables.get('target_flow_version_id'));",
+                  "  pm.expect(body.status).to.eql('PUBLISHED');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"targetFlowVersionId\": \"{{target_flow_version_id}}\",\n  \"reason\": \"{{change_reason}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{engine_base_url}}/api/v1/flows/{{flow_id}}/rollback?scope={{flow_scope}}"
+          }
+        },
+        {
+          "name": "Disable Flow - 禁用整个 Flow",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.collectionVariables.get('allow_lifecycle_changes') !== 'true') {",
+                  "  pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('Flow is disabled', function () { pm.expect(body.status).to.eql('DISABLED'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"{{change_reason}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{engine_base_url}}/api/v1/flows/{{flow_id}}/disable?scope={{flow_scope}}"
+          }
+        },
+        {
+          "name": "Deprecate Flow Version - 弃用版本",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.collectionVariables.get('allow_lifecycle_changes') !== 'true') {",
+                  "  pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('Flow version is deprecated', function () { pm.expect(body.status).to.eql('DEPRECATED'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"{{change_reason}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{engine_base_url}}/api/v1/flow-versions/{{flow_version_id}}/deprecate"
+          }
+        },
+        {
+          "name": "Disable Flow Version - 禁用版本",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.collectionVariables.get('allow_lifecycle_changes') !== 'true') {",
+                  "  pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('Flow version is disabled', function () { pm.expect(body.status).to.eql('DISABLED'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"{{change_reason}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{engine_base_url}}/api/v1/flow-versions/{{flow_version_id}}/disable"
+          }
+        }
+      ]
+    }
+  ]
+}

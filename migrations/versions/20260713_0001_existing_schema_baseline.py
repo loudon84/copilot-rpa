@@ -1,11 +1,11 @@
-"""Baseline the existing rpa_engine schema.
+"""为现有 rpa_engine Schema 建立基线。
 
-Revision ID: 20260713_0001
-Revises:
-Create Date: 2026-07-13
+修订标识：20260713_0001
+前置修订：
+创建日期：2026-07-13
 
-The test database already contains these objects. Do not run ``upgrade`` there;
-after an approved drift review, an administrator must stamp this revision.
+测试数据库已包含这些对象，禁止在其中执行 ``upgrade``；完成获批的结构漂移
+检查后，必须由管理员对该修订执行 stamp。
 """
 
 from __future__ import annotations
@@ -39,13 +39,13 @@ def _baseline_statements() -> list[str]:
 
 
 def upgrade() -> None:
-    """Create the baseline only on a new, explicitly authorized database."""
+    """仅在明确获准的新数据库中创建基线。"""
     for statement in _baseline_statements():
         op.execute(sa.text(statement))
 
 
 def downgrade() -> None:
-    """Remove only objects owned by this baseline; retain the Engine schema."""
+    """仅删除本基线拥有的对象，并保留 Engine Schema。"""
     for table_name in (
         "rpa_callback_outbox",
         "rpa_flow_validation_runs",

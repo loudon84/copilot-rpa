@@ -117,6 +117,24 @@ async def test_managed_browser_owns_context_page_trace_and_cleanup(tmp_path) -> 
     assert playwright.stopped is True
 
 
+@pytest.mark.parametrize("channel", ["chrome", "msedge"])
+async def test_managed_browser_preserves_requested_branded_channel(
+    tmp_path: Path,
+    channel: str,
+) -> None:
+    controller = FakeController()
+    manager = ManagedBrowserSessionManager(lambda: controller)
+
+    session = await manager.start(
+        config(channel=channel),
+        run_directory=tmp_path,
+        trace_enabled=False,
+    )
+    await session.close()
+
+    assert controller.playwright.chromium.launch_options["channel"] == channel
+
+
 @pytest.mark.parametrize(
     ("updates", "code"),
     [

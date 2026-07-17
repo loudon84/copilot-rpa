@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -24,11 +24,16 @@ from nodeskclaw_rpa_engine.runtime.browser import ManagedBrowserSessionManager
 from nodeskclaw_rpa_engine.runtime.callbacks import TaskRuntimeEventSink
 from nodeskclaw_rpa_engine.runtime.credentials import build_credential_resolver
 from nodeskclaw_rpa_engine.runtime.engine import RpaRuntime
+from nodeskclaw_rpa_engine.runtime.filesystem import RuntimeFilesystemProbe
 from nodeskclaw_rpa_engine.runtime.loader import (
     FlowLoader,
     ObjectStorageFlowPackageSource,
 )
 from nodeskclaw_rpa_engine.workers.errors import WorkerError
+from nodeskclaw_rpa_engine.workers.outbox import (
+    CallbackOutboxDispatcher,
+    CallbackOutboxService,
+)
 from nodeskclaw_rpa_engine.workers.pool import RunCommandHandler, WorkerPool
 from nodeskclaw_rpa_engine.workers.service import WorkerQueryService
 from nodeskclaw_rpa_engine.workers.source import (
@@ -38,6 +43,19 @@ from nodeskclaw_rpa_engine.workers.source import (
 from nodeskclaw_rpa_engine.workers.task_client import TaskWorkerApiClient
 
 logger = logging.getLogger(__name__)
+
+
+async def _shutdown_component(
+    name: str,
+    closer: Callable[[], Awaitable[None]],
+) -> None:
+    try:
+        await closer()
+    except Exception:
+        logger.exception(
+            "RPA Engine shutdown component failed",
+            extra={"component": name},
+        )
 
 
 def create_app(
@@ -73,9 +91,17 @@ def create_app(
                 object_storage if resolved_settings.minio_enabled else None
             ),
             task_api_probe=resolved_task_client,
+            runtime_filesystem_probe=(
+                RuntimeFilesystemProbe(
+                    resolved_settings.runtime_cache_dir,
+                    resolved_settings.runtime_work_dir,
+                )
+                if resolved_settings.runtime_enabled
+                else None
+            ),
         )
     else:
-        # Tests inject probes and never construct real external clients.
+        # 测试会注入探针，绝不会构造真实的外部客户端。
         database_manager = None
         object_storage = build_object_storage(
             resolved_settings.model_copy(update={"minio_enabled": False})
@@ -102,6 +128,25 @@ def create_app(
             database_manager,
         )
 
+    resolved_callback_outbox = (
+        CallbackOutboxService(database_manager)
+        if database_manager is not None
+        else None
+    )
+    resolved_outbox_dispatcher = (
+        CallbackOutboxDispatcher(
+            database_manager,
+            resolved_task_client,
+            worker_id=resolved_settings.worker_id,
+        )
+        if (
+            database_manager is not None
+            and resolved_task_client is not None
+            and (resolved_settings.worker_enabled or resolved_settings.runtime_enabled)
+        )
+        else None
+    )
+
     resolved_runtime: RpaRuntime | None = None
     resolved_run_handler = run_command_handler
     if resolved_settings.runtime_enabled and resolved_run_handler is None:
@@ -119,7 +164,8 @@ def create_app(
                 worker_id=resolved_settings.worker_id,
             ),
             event_sink_factory=lambda command: TaskRuntimeEventSink(
-                resolved_task_client,
+                resolved_callback_outbox,
+                lease_id=command.lease.lease_id,
                 run_id=command.lease.run_id,
                 worker_id=resolved_settings.worker_id,
             ),
@@ -144,23 +190,31 @@ def create_app(
             resolved_task_client,
             command_source=resolved_source,
             command_handler=resolved_run_handler,
+            callback_outbox=resolved_callback_outbox,
         )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         logger.info("RPA Engine starting", extra=resolved_settings.public_snapshot())
         try:
+            if resolved_outbox_dispatcher is not None:
+                await resolved_outbox_dispatcher.start()
             if resolved_worker_pool is not None:
                 await resolved_worker_pool.start()
             yield
         finally:
             if resolved_worker_pool is not None:
-                await resolved_worker_pool.stop()
+                await _shutdown_component("workerPool", resolved_worker_pool.stop)
+            if resolved_outbox_dispatcher is not None:
+                await _shutdown_component(
+                    "callbackOutbox",
+                    resolved_outbox_dispatcher.stop,
+                )
             if resolved_task_client is not None:
-                await resolved_task_client.close()
+                await _shutdown_component("taskApiClient", resolved_task_client.close)
             if database_manager is not None:
-                await database_manager.close()
-            await object_storage.close()
+                await _shutdown_component("database", database_manager.close)
+            await _shutdown_component("objectStorage", object_storage.close)
             logger.info("RPA Engine stopped")
 
     app = FastAPI(
@@ -177,6 +231,8 @@ def create_app(
     app.state.flow_registry_service = resolved_flow_registry
     app.state.worker_query_service = resolved_worker_query
     app.state.worker_pool = resolved_worker_pool
+    app.state.callback_outbox = resolved_callback_outbox
+    app.state.outbox_dispatcher = resolved_outbox_dispatcher
     app.state.task_client = resolved_task_client
     app.state.runtime = resolved_runtime
 

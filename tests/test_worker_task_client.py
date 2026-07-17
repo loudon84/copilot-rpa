@@ -87,7 +87,7 @@ async def test_task_client_handles_snake_requests_and_camel_lease_response() -> 
                         "profileRef": None,
                         "cdpEndpointRef": None,
                         "closePolicy": "ALWAYS",
-                    }
+                    },
                 },
                 "leaseExpiresAt": expires_at.isoformat(),
             }
@@ -173,6 +173,35 @@ async def test_task_client_rejects_business_error_envelope() -> None:
         await client.heartbeat("worker-1")
     await client.close()
     assert captured.value.code == "WORKER_REJECTED"
+
+
+async def test_event_and_finish_send_idempotency_key_header() -> None:
+    calls: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.url.path, request.headers["Idempotency-Key"]))
+        return httpx.Response(200, json={"code": 0, "data": {"accepted": True}})
+
+    client = TaskWorkerApiClient(
+        worker_settings(),
+        transport=httpx.MockTransport(handler),
+    )
+    await client.event(
+        "run-1",
+        RunEventRequest(type="RUN_STARTED", message="started"),
+        idempotency_key="event-key-1",
+    )
+    await client.finish(
+        "run-1",
+        RunFinishRequest(status=AttemptStatus.SUCCESS),
+        idempotency_key="finish-key-1",
+    )
+    await client.close()
+
+    assert calls == [
+        ("/api/worker-api/runs/run-1/events", "event-key-1"),
+        ("/api/worker-api/runs/run-1/finish", "finish-key-1"),
+    ]
 
 
 async def test_task_client_rejects_incomplete_phase_3_lease() -> None:
@@ -287,3 +316,97 @@ async def test_task_client_uploads_artifact_with_mixed_task_contract() -> None:
         "size": 5,
         "mime_type": "image/png",
     }
+
+
+@pytest.mark.parametrize(
+    "loopback_url",
+    [
+        "http://localhost:9000/bucket/order.xlsx?signature=kept",
+        "http://127.0.0.1:9000/bucket/order.xlsx?signature=kept",
+        "https://[::1]:9000/bucket/order.xlsx?signature=kept",
+    ],
+)
+async def test_task_client_rewrites_only_loopback_artifact_upload_origin(
+    loopback_url: str,
+) -> None:
+    uploaded_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        uploaded_urls.append(str(request.url))
+        return httpx.Response(200)
+
+    settings = Settings(
+        _env_file=None,
+        app_env="test",
+        task_api_base_url="http://task/api",
+        task_artifact_upload_base_url="https://storage-proxy.test:9443/ignored",
+    )
+    client = TaskWorkerApiClient(
+        settings,
+        transport=httpx.MockTransport(handler),
+    )
+
+    await client.upload_signed_artifact(
+        loopback_url,
+        b"xlsx",
+        content_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+    )
+    await client.close()
+
+    assert uploaded_urls == [
+        "https://storage-proxy.test:9443/bucket/order.xlsx?signature=kept"
+    ]
+
+
+async def test_task_client_does_not_rewrite_non_loopback_artifact_upload_url() -> None:
+    uploaded_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        uploaded_urls.append(str(request.url))
+        return httpx.Response(200)
+
+    settings = Settings(
+        _env_file=None,
+        app_env="test",
+        task_api_base_url="http://task/api",
+        task_artifact_upload_base_url="https://storage-proxy.test:9443",
+    )
+    client = TaskWorkerApiClient(
+        settings,
+        transport=httpx.MockTransport(handler),
+    )
+    upload_url = "https://objects.test:9000/bucket/file.xlsx?signature=kept"
+
+    await client.upload_signed_artifact(
+        upload_url,
+        b"xlsx",
+        content_type="application/octet-stream",
+    )
+    await client.close()
+
+    assert uploaded_urls == [upload_url]
+
+
+async def test_task_client_keeps_loopback_upload_url_without_override() -> None:
+    uploaded_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        uploaded_urls.append(str(request.url))
+        return httpx.Response(200)
+
+    client = TaskWorkerApiClient(
+        worker_settings(),
+        transport=httpx.MockTransport(handler),
+    )
+    upload_url = "http://127.0.0.1:9000/bucket/file.xlsx?signature=kept"
+
+    await client.upload_signed_artifact(
+        upload_url,
+        b"xlsx",
+        content_type="application/octet-stream",
+    )
+    await client.close()
+
+    assert uploaded_urls == [upload_url]

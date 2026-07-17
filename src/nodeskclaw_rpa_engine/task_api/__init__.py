@@ -1,1 +1,1 @@
-"""nodeskclaw-task integration foundations."""
+"""nodeskclaw-task 集成基础模块。"""

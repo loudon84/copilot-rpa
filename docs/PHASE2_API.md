@@ -1,4 +1,4 @@
-# Phase 2 Flow Registry API
+# Phase 2 Flow Registry 接口
 
 本地默认地址：`http://127.0.0.1:4610`。其他环境请通过部署配置或
 Postman Collection 变量指定地址。
@@ -10,11 +10,11 @@ X-Actor-Id: <调用者标识>
 X-Tenant-Id: <仅 TENANT Flow 必填>
 ```
 
-这些 Header 仅用于测试环境的租户上下文和审计记录，不是生产鉴权。
+这些请求头仅用于测试环境的租户上下文和审计记录，不是生产鉴权。
 
 ## 接口
 
-| Method | Path | 说明 |
+| 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | `GET` | `/api/v1/flows` | 查询可见 Flow，支持 `scope/status/search/limit/offset` |
 | `POST` | `/api/v1/flows/packages` | multipart 上传、校验并创建 DRAFT 版本 |

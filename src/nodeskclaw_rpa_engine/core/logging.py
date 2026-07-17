@@ -20,7 +20,7 @@ _flow_version_id: ContextVar[str | None] = ContextVar(
 
 _SENSITIVE_KEY = re.compile(
     r"password|passwd|secret|token|authorization|credential|database_url|dsn|"
-    r"access_key|private_key",
+    r"api[-_]?key|access[-_]?key|private[-_]?key|cookie|session",
     re.IGNORECASE,
 )
 _URL_CREDENTIALS = re.compile(r"(://[^:/@\s]+:)([^@\s]+)(@)")
@@ -29,9 +29,33 @@ _SIGNED_QUERY_VALUE = re.compile(
     r"(?i)([?&](?:x-amz-signature|x-amz-credential|x-amz-security-token|"
     r"signature|access_token|token)=)[^&\s]+"
 )
+_SENSITIVE_ASSIGNMENT_NAME = (
+    r"(?:(?:[A-Za-z0-9]+[-_])*)"
+    r"(?:password|passwd|secret(?:[-_]?key)?|token|authorization|credential|"
+    r"database[-_]?url|dsn|api[-_]?key|access[-_]?key(?:[-_]?id)?|"
+    r"private[-_]?key|cookie|session(?:[-_]?id)?|sessionid)"
+)
+_QUOTED_SECRET = re.compile(
+    rf"(?ix)"
+    rf"(?P<prefix>[\"']?\b{_SENSITIVE_ASSIGNMENT_NAME}[\"']?\s*[:=]\s*)"
+    rf"(?P<quote>[\"'])"
+    rf"(?P<value>(?:\\.|(?!(?P=quote)).)*)"
+    rf"(?P=quote)"
+)
+_COOKIE_HEADER_VALUE = re.compile(
+    r"(?i)(?P<prefix>[\"']?\b(?:cookie|set[-_]?cookie)[\"']?\s*[:=]\s*)"
+    r"(?![\"'])(?P<value>[^\r\n]+)"
+)
+_AUTHORIZATION_VALUE = re.compile(
+    r"(?i)"
+    r"(?P<prefix>[\"']?\b(?:proxy[-_]?authorization|authorization)"
+    r"[\"']?\s*[:=]\s*)"
+    r"(?![\"'])(?P<value>[^\r\n;]+)"
+)
 _INLINE_SECRET = re.compile(
-    r"(?i)\b(password|passwd|secret|token|access_key|credential)="
-    r"([^&\s,;]+)"
+    rf"(?i)(?P<prefix>[\"']?\b{_SENSITIVE_ASSIGNMENT_NAME}"
+    rf"[\"']?\s*[:=]\s*)"
+    rf"(?![\"'])(?P<value>[^&\s,;}}\]]+)"
 )
 
 _STANDARD_LOG_RECORD_FIELDS = {
@@ -63,9 +87,12 @@ _STANDARD_LOG_RECORD_FIELDS = {
 
 def _redact_string(value: str) -> str:
     value = _URL_CREDENTIALS.sub(r"\1***\3", value)
-    value = _BEARER_TOKEN.sub(r"\1***", value)
     value = _SIGNED_QUERY_VALUE.sub(r"\1***", value)
-    return _INLINE_SECRET.sub(r"\1=***", value)
+    value = _QUOTED_SECRET.sub(r"\g<prefix>\g<quote>***\g<quote>", value)
+    value = _COOKIE_HEADER_VALUE.sub(r"\g<prefix>***", value)
+    value = _AUTHORIZATION_VALUE.sub(r"\g<prefix>***", value)
+    value = _BEARER_TOKEN.sub(r"\1***", value)
+    return _INLINE_SECRET.sub(r"\g<prefix>***", value)
 
 
 def redact_sensitive(value: Any, key: str | None = None) -> Any:
@@ -104,7 +131,9 @@ class StructuredJsonFormatter(logging.Formatter):
         if extras:
             payload["fields"] = extras
         if record.exc_info:
-            payload["exception"] = self.formatException(record.exc_info)
+            payload["exception"] = redact_sensitive(
+                self.formatException(record.exc_info)
+            )
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 

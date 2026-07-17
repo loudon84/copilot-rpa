@@ -7,6 +7,7 @@ import inspect
 import json
 import os
 import shutil
+import stat
 import sys
 import tempfile
 import zipfile
@@ -107,8 +108,16 @@ class FlowLoader:
         )
 
     async def _ensure_cached(self, flow: ResolvedFlowVersion) -> Path:
-        target = self._target_directory(flow)
-        if await asyncio.to_thread(self._cache_is_valid, target, flow):
+        try:
+            target = self._target_directory(flow)
+            cache_is_valid = await asyncio.to_thread(
+                self._cache_is_valid,
+                target,
+                flow,
+            )
+        except OSError as exc:
+            raise self._cache_error(exc) from exc
+        if cache_is_valid:
             return target
         content = await self._source.fetch(flow)
         actual_checksum = hashlib.sha256(content).hexdigest()
@@ -129,7 +138,10 @@ class FlowLoader:
                 "Flow package failed Runtime validation",
             ) from exc
         self._validate_identity(flow, package)
-        await asyncio.to_thread(self._replace_cache, target, package)
+        try:
+            await asyncio.to_thread(self._replace_cache, target, package)
+        except OSError as exc:
+            raise self._cache_error(exc) from exc
         return target
 
     def _target_directory(self, flow: ResolvedFlowVersion) -> Path:
@@ -152,16 +164,30 @@ class FlowLoader:
     def _cache_is_valid(target: Path, flow: ResolvedFlowVersion) -> bool:
         archive = target / "package.zip"
         marker = target / ".ready"
-        if not archive.is_file() or not marker.is_file():
-            return False
         try:
-            if marker.read_text(encoding="utf-8").strip() != flow.package_checksum:
-                return False
-            return hashlib.sha256(archive.read_bytes()).hexdigest() == (
-                flow.package_checksum
-            )
-        except OSError:
+            archive_mode = archive.stat().st_mode
+            marker_mode = marker.stat().st_mode
+        except (FileNotFoundError, NotADirectoryError):
             return False
+        if not stat.S_ISREG(archive_mode) or not stat.S_ISREG(marker_mode):
+            return False
+        if marker.read_text(encoding="utf-8").strip() != flow.package_checksum:
+            return False
+        return hashlib.sha256(archive.read_bytes()).hexdigest() == (
+            flow.package_checksum
+        )
+
+    @staticmethod
+    def _cache_error(error: OSError) -> RpaFatalError:
+        if isinstance(error, PermissionError):
+            return RpaFatalError(
+                "FLOW_CACHE_ACCESS_DENIED",
+                "Flow cache access was denied",
+            )
+        return RpaFatalError(
+            "FLOW_CACHE_WRITE_FAILED",
+            "Flow cache could not be written",
+        )
 
     def _replace_cache(
         self,
@@ -246,6 +272,8 @@ class FlowLoader:
             return manifest, selectors, cast(FlowEntrypoint, entrypoint)
         except RpaFatalError:
             raise
+        except OSError as exc:
+            raise FlowLoader._cache_error(exc) from exc
         except Exception as exc:
             raise RpaFatalError(
                 "FLOW_LOAD_FAILED",
@@ -254,9 +282,11 @@ class FlowLoader:
 
     @staticmethod
     def _load_selectors(path: Path) -> Mapping[str, Any]:
-        if not path.exists():
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
             return {}
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(raw)
         if not isinstance(data, dict) or not all(
             isinstance(key, str) for key in data
         ):

@@ -50,11 +50,13 @@ class ReadinessService:
         database_probe: DependencyProbe | None = None,
         object_storage_probe: DependencyProbe | None = None,
         task_api_probe: DependencyProbe | None = None,
+        runtime_filesystem_probe: DependencyProbe | None = None,
     ) -> None:
         self._settings = settings
         self._database_probe = database_probe
         self._object_storage_probe = object_storage_probe
         self._task_api_probe = task_api_probe
+        self._runtime_filesystem_probe = runtime_filesystem_probe
 
     def liveness(self) -> LivenessResponse:
         return LivenessResponse(
@@ -87,10 +89,15 @@ class ReadinessService:
                 detail="worker_disabled",
             )
         )
+        runtime_filesystem = await self._dependency_status(
+            enabled=self._settings.runtime_enabled,
+            probe=self._runtime_filesystem_probe,
+        )
         dependencies = {
             "database": database,
             "objectStorage": object_storage,
             "taskApi": task_api,
+            "runtimeFilesystem": runtime_filesystem,
         }
         is_ready = all(
             not item.required or item.state is DependencyState.HEALTHY
@@ -126,7 +133,7 @@ class ReadinessService:
             )
         try:
             await probe.check()
-        except Exception as exc:  # readiness must return a safe, stable response
+        except Exception as exc:  # readiness 必须返回安全、稳定的响应
             return DependencyHealth(
                 state=DependencyState.UNHEALTHY,
                 required=True,

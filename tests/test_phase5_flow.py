@@ -18,7 +18,12 @@ from nodeskclaw_rpa_engine.runtime.errors import (
     RpaHumanRequiredError,
 )
 
-FLOW_ROOT = Path(__file__).resolve().parents[1] / "examples" / "mock-srm-flow"
+FLOW_ROOT = (
+    Path(__file__).resolve().parents[1]
+    / "examples"
+    / "mock-srm-flow"
+    / "1.0.0"
+)
 SUCCESS_PO = "PO-20260708-001"
 NOT_FOUND_PO = "PO-NOT-FOUND"
 MANUAL_PO = "PO-MANUAL-001"

@@ -162,7 +162,7 @@ class LocalMockSrmServer:
 
 
 def build_package(root: Path) -> bytes:
-    source = root / "examples" / "mock-srm-flow"
+    source = root / "examples" / "mock-srm-flow" / "1.0.0"
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
         for name in ("manifest.json", "selectors.json", "flow.py"):

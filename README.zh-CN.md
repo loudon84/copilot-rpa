@@ -18,17 +18,20 @@ Engine 没有对外提供直接运行或调试 Flow 的 HTTP API，业务运行�
 2026-07-16 对测试服务器 OpenAPI 进行的只读核对已确认：Task 提供了 Engine
 所需的 lease/renew 契约字段，以及 Worker Artifact 上传地址接口。该核对只
 验证接口结构，不代表真实 Task 驱动链路已经联调成功。在专用测试数据、精确
-发布的 Registry 版本、Mock 凭据与 Portal 作用域，以及完整回调链路准备并完成
+发布的 Registry 版本、受限测试凭据与 Portal 作用域，以及完整回调链路准备并完成
 端到端验证前，真实 lease 轮询仍应保持关闭。
 
-项目提供确定性的 Mock SRM Flow，覆盖 `SUCCESS`、`FAILED` 和
-`WAITING_HUMAN` 三种结果。当前 `WAITING_HUMAN` 使用 Type-A 模式：证据记录
-完成后关闭服务器浏览器，人工处理后不恢复原有 Playwright 会话。
+Flow `1.0.0` 是确定性的本地 Mock SRM 基线，覆盖 `SUCCESS`、`FAILED` 和
+`WAITING_HUMAN` 三种结果。Flow `1.1.0` 使用配置传入的供应商门户，执行登录、
+订单查询、进入详情页和下载 XLSX。当前 `WAITING_HUMAN` 使用 Type-A 模式：
+证据记录完成后关闭服务器浏览器，人工处理后不恢复原有 Playwright 会话。
 
 ## 环境要求
 
 - Python `>=3.12,<3.13`
 - 下列命令使用 Windows PowerShell
+- Linux 常驻部署请使用 `docs/LINUX_DEPLOYMENT.md` 中的 Python 3.12、Chromium 和
+  systemd 配置，不要直接套用 Windows 路径。
 - 使用“禁用外部依赖”配置时，不要求本机运行 PostgreSQL 或 MinIO
 
 ## 本地安装与启动
@@ -60,13 +63,15 @@ Engine 根地址，因为 Registry 返回的 Flow `packageUri` 会使用该地�
 
 ## 文档导航
 
+- Linux 非 root 用户、Runtime 目录、Playwright Chromium 和 systemd 部署：
+  [`docs/LINUX_DEPLOYMENT.md`](docs/LINUX_DEPLOYMENT.md)
 - Flow Registry 请求、Flow 包上传、版本发布和绑定校验示例：
   [`docs/PHASE2_API.md`](docs/PHASE2_API.md)
 - Worker 配置、Task lease 契约和真实冒烟测试边界：
   [`docs/PHASE3_WORKER.md`](docs/PHASE3_WORKER.md)
 - Runtime、浏览器会话、Artifact 和错误处理行为：
   [`docs/PHASE4_RUNTIME.md`](docs/PHASE4_RUNTIME.md)
-- Mock SRM 服务、演示 Flow 和三场景浏览器验证：
+- 版本化的本地 Mock Flow、真实供应商门户 Flow 和浏览器验证：
   [`docs/PHASE5_MOCK_SRM.md`](docs/PHASE5_MOCK_SRM.md)
 - 测试机部署、Flow 发布、Task 数据准备和端到端验收顺序：
   [`docs/PHASE5_TEST_SERVER_HANDOFF.md`](docs/PHASE5_TEST_SERVER_HANDOFF.md)
@@ -90,6 +95,26 @@ Engine 根地址，因为 Registry 返回的 Flow `packageUri` 会使用该地�
 
 该本地演示使用内存替身，不访问 PostgreSQL、MinIO 或 Task API。
 
+构建当前供应商门户 Flow（默认版本也是 `1.1.0`）：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\build_phase5_package.py --version 1.1.0
+```
+
+真实门户地址和凭据只能放在本地环境变量或 Task 部署配置中：
+
+```powershell
+$env:SUPPLIER_PORTAL_URL = "<供应商门户地址>"
+$env:SUPPLIER_PORTAL_USERNAME = "<用户名>"
+$env:SUPPLIER_PORTAL_PASSWORD = "<密码>"
+.\.venv\Scripts\python.exe scripts\run_supplier_portal_demo.py `
+  --po-no POJS2606030010 `
+  --channel chrome
+```
+
+当前门户详情页下载的是固定 XLSX，不是 PDF，也不是按订单生成的独立文件。
+冒烟测试会记录请求订单号，但不会声称该固定文件与订单一一对应。
+
 ## 质量检查
 
 ```powershell
@@ -111,7 +136,7 @@ Engine 根地址，因为 Registry 返回的 Flow `packageUri` 会使用该地�
 - Flow Registry 依赖 PostgreSQL 和对象存储；Worker 依赖 PostgreSQL；Runtime
   依赖对象存储。启用 Worker 或 Runtime 后，Task API 会成为 readiness 的必要
   依赖，不可用时 `/health/ready` 返回 503。
-- 数据库密码、MinIO Key、服务账号秘密和 Mock 凭据只能通过本地 `.env`、部署
+- 数据库密码、MinIO Key、服务账号秘密和门户凭据只能通过本地 `.env`、部署
   环境变量或受管秘密注入，不得提交到 Git，也不得写入日志。
 - 当前 `TASK_AUTH_MODE=none` 仅用于测试环境兼容。生产环境仍需实现 Worker
   服务账号 Token exchange。
@@ -122,7 +147,7 @@ Engine 根地址，因为 Registry 返回的 Flow `packageUri` 会使用该地�
   Runtime Handler，并且只能在专用联调数据获得明确批准后开启。
 - 凭据解析默认关闭。`mock_env` 只允许用于 development/test，并且必须严格
   限制到一个 credential reference、一个 tenant 和一个 Portal account。它只用于
-  Mock SRM 演示，不能替代生产凭据服务适配器。
+  受控的 Phase 5 演示，不能替代生产凭据服务适配器。
 - 部署地址通过环境变量提供。本仓库不得提交内部地址、`.env`、JWT、真实凭据、
   Flow ZIP、浏览器 Trace、截图、下载文件或 Runtime Artifact。
 
@@ -275,7 +300,7 @@ mime_type
 统一的敏感字段脱敏处理。当前重试粒度是整个 Flow，可能重复外部副作用，因此
 Flow 必须自行保证业务操作幂等。
 
-## Mock SRM 演示
+## Phase 5 版本化演示 Flow
 
 Mock SRM 是独立的本地 FastAPI 服务。启动 Engine 不会自动启动或暴露 Mock
 Portal：
@@ -291,7 +316,7 @@ GET http://127.0.0.1:4600/health/live
 GET http://127.0.0.1:4600/
 ```
 
-三个固定场景：
+`1.0.0` 保留为本地确定性 Mock，三个固定场景为：
 
 | `po_no` | Runtime 结果 | 错误码 |
 | --- | --- | --- |
@@ -299,20 +324,32 @@ GET http://127.0.0.1:4600/
 | `PO-NOT-FOUND` | `FAILED` | `BUSINESS_NOT_FOUND` |
 | `PO-MANUAL-001` | `WAITING_HUMAN` | `HUMAN_VERIFICATION_REQUIRED` |
 
-构建发布用 Flow ZIP：
+`1.1.0` 使用 `ctx.portal_url` 指向部署时配置的供应商门户，并使用 Runtime
+解析的凭据完成登录、查询订单、进入详情页和确认下载。默认验收订单为
+`POJS2606030010`；实际任务仍通过 `po_no` 动态传入。未知验证码返回
+`WAITING_HUMAN / HUMAN_VERIFICATION_REQUIRED`。
+
+构建发布用 Flow ZIP。构建器默认选择 `1.1.0`，也可以显式构建保留的
+`1.0.0`：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\build_phase5_package.py
+.\.venv\Scripts\python.exe scripts\build_phase5_package.py --version 1.1.0
+.\.venv\Scripts\python.exe scripts\build_phase5_package.py --version 1.0.0
 ```
 
 输出：
 
 ```text
+dist/rpa_flow_mock_srm_fetch_po-1.1.0.zip
 dist/rpa_flow_mock_srm_fetch_po-1.0.0.zip
 ```
 
-ZIP 只包含 `manifest.json`、`selectors.json` 和 `flow.py`，不包含凭据或环境
-配置。`dist/` 已被 Git 忽略，构建产物不作为源码提交。
+每个 ZIP 只包含 `manifest.json`、`selectors.json` 和 `flow.py`，不包含凭据、
+内网地址或环境配置。`dist/` 已被 Git 忽略，构建产物不作为源码提交。
+
+`1.1.0` 当前验收的是门户返回的固定 `order-20260709122735.xlsx`，不是 PDF。
+WorkflowBinding 必须绑定发布后返回的精确 `1.1.0` Flow Version UUID 和
+checksum，禁止使用 `1.0.0` 快照或“最新版本”回退。
 
 ## 当前联调边界
 
@@ -323,18 +360,22 @@ ZIP 只包含 `manifest.json`、`selectors.json` 和 `flow.py`，不包含凭据
   register、heartbeat、lease、renew 或回调运行记录。
 - Task 调度当前使用 HTTP lease/renew 兼容层。生产 Queue 的 ack、可见性超时、
   重试和死信行为仍待实现。
-- event、Artifact metadata 和 finish 当前采用直接回调。Callback Outbox
-  数据结构已经预留，但尚未接入 Runtime 回调投递。
+- 对已创建 execution attempt 的运行，EVENT 和 FINISH 会先持久化到现有
+  `rpa_callback_outbox`，再由后台按至少一次语义重试投递，并携带稳定的
+  `Idempotency-Key`。Artifact 上传和 metadata 登记仍采用直接调用；只有在
+  attempt 创建前被前置校验拒绝时，才使用 direct best-effort 回调兜底。
+- Task 必须持久化并按 `Idempotency-Key` 去重回调；后续还需结合 `leaseId`
+  拒绝旧 attempt 发出的跨 attempt 陈旧 FINISH。
 - `TASK_AUTH_MODE=none` 和测试 actor header 都不是生产鉴权，Worker
   服务账号鉴权仍是生产发布前置条件。
 - Python Flow 当前运行在 Engine 进程中。静态策略只能降低误用风险，不能提供
   操作系统级隔离；生产环境仍需决定是否采用独立进程或容器隔离。
 - 当前 Task lease 不能作为生产级能力调度机制使用。开启 lease 前必须确保只有
   专用且获批的测试 Run 处于可领取状态。
-- `config.portalUrl` 目前只允许用于受控 Mock Runtime。生产 Portal 地址解析
+- `config.portalUrl` 目前只允许用于受控测试 Runtime。生产 Portal 地址解析
   仍需由受治理的 Task/Portal 配置适配器提供。
 - Type-A `WAITING_HUMAN` 不支持人工处理后恢复原 Playwright 浏览器会话。
-- 在专用 Binding 与 Run 获批、精确 Registry 版本及 Mock 作用域准备完成，并且
+- 在专用 Binding 与 Run 获批、精确 Registry 版本及测试作用域准备完成，并且
   lease、renew、event、Artifact upload/metadata 和 finish 完成真实端到端验证
   前，必须保持 `WORKER_LEASE_ENABLED=false`。
 

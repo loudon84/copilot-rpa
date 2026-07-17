@@ -8,7 +8,7 @@ from botocore.exceptions import ClientError
 
 
 class S3ObjectStorageClient:
-    """Small S3-compatible foundation; package operations are added in Phase 2."""
+    """轻量的 S3 兼容基础实现；包操作在 Phase 2 中提供。"""
 
     def __init__(
         self,

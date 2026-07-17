@@ -13,10 +13,12 @@ owns WorkflowBinding, business tasks, runs, events, Artifact metadata, and
 HumanAction. A read-only test-server OpenAPI check on 2026-07-16 confirmed the
 required lease/renew schema and Worker Artifact upload-url route. Real Task
 lease polling remains disabled until dedicated test data, an exact published
-Registry version, Mock scope/Portal configuration, and the full callback path
-are approved and exercised end to end. The included deterministic Mock SRM
-Flow covers SUCCESS, FAILED, and WAITING_HUMAN outcomes; WAITING_HUMAN uses the
-type-A model and does not resume the original server browser session.
+Registry version, scoped test credentials/Portal configuration, and the full callback path
+are approved and exercised end to end. Flow `1.0.0` is the deterministic local
+Mock SRM baseline covering SUCCESS, FAILED, and WAITING_HUMAN. Flow `1.1.0`
+uses a configured supplier portal and performs login, order lookup, detail-page
+navigation, and XLSX download. WAITING_HUMAN uses the type-A model and does not
+resume the original server browser session.
 
 ## Requirements
 
@@ -54,8 +56,8 @@ Worker configuration, Task lease contract, and live-smoke boundaries are in
 Runtime, browser, Artifact, and error behavior are documented in
 [`docs/PHASE4_RUNTIME.md`](docs/PHASE4_RUNTIME.md).
 
-The Mock SRM service, demo Flow package, and three-scenario browser harness are
-documented in [`docs/PHASE5_MOCK_SRM.md`](docs/PHASE5_MOCK_SRM.md).
+The versioned local Mock and configured supplier-portal Flows are documented in
+[`docs/PHASE5_MOCK_SRM.md`](docs/PHASE5_MOCK_SRM.md).
 
 The ordered test-server deployment, Flow publication, Task data setup, and
 end-to-end acceptance checklist is in
@@ -66,6 +68,28 @@ Run all three Phase 5 scenarios locally with installed Chrome:
 ```powershell
 .\.venv\Scripts\python.exe scripts\run_phase5_demo.py --start-mock-srm --channel chrome
 ```
+
+Build the current supplier-portal package (`1.1.0` is the default):
+
+```powershell
+.\.venv\Scripts\python.exe scripts\build_phase5_package.py --version 1.1.0
+```
+
+Run its local browser smoke test with the portal URL and credentials supplied
+only through local environment variables:
+
+```powershell
+$env:SUPPLIER_PORTAL_URL = "<supplier-portal-url>"
+$env:SUPPLIER_PORTAL_USERNAME = "<username>"
+$env:SUPPLIER_PORTAL_PASSWORD = "<password>"
+.\.venv\Scripts\python.exe scripts\run_supplier_portal_demo.py `
+  --po-no POJS2606030010 `
+  --channel chrome
+```
+
+The currently observed portal download is a fixed XLSX file, not a PDF and not
+a per-order document. The smoke test records the requested order number but
+does not claim that the fixed download is unique to that order.
 
 ## Quality checks
 
@@ -97,7 +121,7 @@ Run all three Phase 5 scenarios locally with installed Chrome:
   Phase 4 Runtime Handler and explicit approval for dedicated integration data.
 - Credential resolution is disabled by default. `mock_env` is restricted to
   development/test, one credential reference, one tenant, and one Portal
-  account. It is only for the dedicated Mock SRM demonstration; production
+  account. It is only for controlled Phase 5 demonstrations; production
   requires a governed credential-service adapter.
 
 ## Current integration boundaries
@@ -109,14 +133,20 @@ Run all three Phase 5 scenarios locally with installed Chrome:
   successful register, heartbeat, lease, renew, or callback run.
 - Task dispatch uses an HTTP lease/renew compatibility source. Production Queue
   ack, visibility timeout, retry, and dead-letter behavior remain future work.
-- Event, Artifact, and finish callbacks are direct. The Callback Outbox schema
-  exists, but durable dispatch is not yet wired into Runtime callbacks.
+- For an accepted execution attempt, EVENT and FINISH callbacks are persisted
+  in the existing `rpa_callback_outbox` table and dispatched in the background
+  with at-least-once retry and a stable `Idempotency-Key`. Artifact upload and
+  metadata callbacks remain direct. A rejection that occurs before an attempt
+  exists uses a direct best-effort callback as the only fallback.
+- Task must persist and deduplicate every callback `Idempotency-Key`. Future
+  Task hardening must also use `leaseId` to reject a stale FINISH callback from
+  an older attempt.
 - Test actor headers and `TASK_AUTH_MODE=none` are not production
   authentication. Worker service-account authentication remains required.
 - Python Flow modules currently run in the Engine process; static policy checks
   are not OS-level isolation.
 - Lease polling stays off until a dedicated binding/run is approved, its exact
-  active published Registry version and Mock credential/Portal scope are
+  active published Registry version and scoped test credential/Portal data are
   prepared, and lease, renew, Artifact/event/finish callbacks complete a real
   end-to-end test. Production authentication also remains required.
 

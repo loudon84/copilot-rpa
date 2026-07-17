@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from nodeskclaw_rpa_engine.core.config import Settings
 from nodeskclaw_rpa_engine.core.health import (
     DependencyState,
     ReadinessService,
 )
+from nodeskclaw_rpa_engine.runtime.filesystem import RuntimeFilesystemProbe
 
 
 class HealthyProbe:
@@ -29,6 +32,43 @@ async def test_disabled_dependencies_do_not_block_readiness() -> None:
         is DependencyState.DISABLED
     )
     assert response.dependencies["taskApi"].state is DependencyState.NOT_CHECKED
+    runtime_filesystem = response.dependencies["runtimeFilesystem"]
+    assert runtime_filesystem.state is DependencyState.DISABLED
+    assert runtime_filesystem.required is False
+
+
+async def test_runtime_filesystem_probe_checks_both_directories(
+    tmp_path: Path,
+) -> None:
+    cache_dir = tmp_path / "cache"
+    work_dir = tmp_path / "work"
+    settings = Settings(
+        _env_file=None,
+        app_env="test",
+        minio_enabled=True,
+        minio_endpoint_url="http://object-storage.test",
+        minio_access_key="test-access-key",
+        minio_secret_key="test-secret-key",
+        runtime_enabled=True,
+        runtime_cache_dir=cache_dir,
+        runtime_work_dir=work_dir,
+    )
+
+    response, is_ready = await ReadinessService(
+        settings,
+        object_storage_probe=HealthyProbe(),
+        task_api_probe=HealthyProbe(),
+        runtime_filesystem_probe=RuntimeFilesystemProbe(cache_dir, work_dir),
+    ).readiness()
+
+    dependency = response.dependencies["runtimeFilesystem"]
+    assert is_ready is True
+    assert dependency.required is True
+    assert dependency.state is DependencyState.HEALTHY
+    assert cache_dir.is_dir()
+    assert work_dir.is_dir()
+    assert list(cache_dir.iterdir()) == []
+    assert list(work_dir.iterdir()) == []
 
 
 async def test_enabled_healthy_dependency_is_required() -> None:
@@ -108,11 +148,13 @@ async def test_task_api_is_required_when_only_runtime_is_enabled() -> None:
         settings,
         object_storage_probe=HealthyProbe(),
         task_api_probe=HealthyProbe(),
+        runtime_filesystem_probe=HealthyProbe(),
     ).readiness()
     failed, failed_is_ready = await ReadinessService(
         settings,
         object_storage_probe=HealthyProbe(),
         task_api_probe=FailingProbe(),
+        runtime_filesystem_probe=HealthyProbe(),
     ).readiness()
 
     assert is_ready is True

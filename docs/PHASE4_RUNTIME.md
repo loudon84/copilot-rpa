@@ -1,31 +1,28 @@
-# Phase 4 Runtime Baseline
+# Phase 4 Runtime 生产基线
 
-Phase 4 implements the internal `RunCommandHandler` used by the Worker Pool. It
-does not add a direct run/debug HTTP endpoint and does not enable real lease
-polling by default.
+Phase 4 实现 Worker Pool 使用的内部 `RunCommandHandler`。本阶段不新增直接运行或
+调试 Flow 的 HTTP 接口，默认也不启用真实 lease 轮询。
 
-## Delivered modules
+## 已交付模块
 
-- `FlowLoader`: downloads the exact Registry package object, verifies SHA-256,
-  reruns package validation, extracts atomically, and caches by
-  `rpaFlowId/version/checksum`.
-- `RunContext`: injects immutable copies of input, credentials, selectors, safe
-  runtime configuration, managed Page, Artifact Recorder, logs, and events.
-- `ManagedBrowserSessionManager`: owns Playwright, Chromium/Chrome/Edge,
-  BrowserContext, Page, download directory, Trace, and deterministic cleanup.
-- `ArtifactRecorder`: records screenshots, downloads, Trace, and logs under the
-  run directory; checks path and size; hashes the file; then uses Task
-  `/worker-api/artifacts/upload-url`, signed PUT, and run Artifact metadata
-  callback.
-- `ErrorHandler`: maps retryable, business, human-required, fatal, timeout, and
-  unknown errors to retry, FAILED, or WAITING_HUMAN.
-- `RpaRuntime`: composes loading, credentials, browser, context, retry, failure
-  screenshot, Trace, events, artifacts, and terminal `RunResult`.
+- `FlowLoader`：下载 Registry 中的精确版本包对象、校验 SHA-256、重新执行包校验、
+  原子化解压，并按 `rpaFlowId/version/checksum` 缓存。
+- `RunContext`：注入输入、凭据、选择器和安全 Runtime 配置的不可变副本，以及托管的
+  Page、Artifact Recorder、日志和事件。
+- `ManagedBrowserSessionManager`：统一管理 Playwright、Chromium/Chrome/Edge、
+  BrowserContext、Page、下载目录、Trace 和确定性资源清理。
+- `ArtifactRecorder`：在 Run 目录下记录截图、下载文件、Trace 和日志；检查路径与大小并
+  计算文件哈希，随后调用 Task `/worker-api/artifacts/upload-url`、签名 PUT 和 Run
+  Artifact 元数据回调。
+- `ErrorHandler`：将可重试、业务、需要人工处理、致命、超时及未知错误映射为重试、
+  `FAILED` 或 `WAITING_HUMAN`。
+- `RpaRuntime`：组合包加载、凭据解析、浏览器、上下文、重试、失败截图、Trace、事件、
+  Artifact 和终态 `RunResult`。
 
-Worker Pool continues to own execution-attempt state and Task finish. Runtime
-owns Flow execution and returns `SUCCESS`, `FAILED`, or `WAITING_HUMAN`.
+Worker Pool 继续负责执行尝试状态和 Task 的 `finish`；Runtime 负责执行 Flow，并返回
+`SUCCESS`、`FAILED` 或 `WAITING_HUMAN`。
 
-## Configuration
+## 配置
 
 ```env
 RUNTIME_ENABLED=false
@@ -39,90 +36,99 @@ RUNTIME_TRACE_MODE=ON_FAILURE
 ARTIFACT_MAX_BYTES=209715200
 ```
 
-`RUNTIME_ENABLED=true` requires the existing MinIO package storage settings.
-It does not implicitly set `WORKER_LEASE_ENABLED=true`.
+`RUNTIME_ENABLED=true` 依赖既有的 MinIO 包存储配置，但不会隐式设置
+`WORKER_LEASE_ENABLED=true`。
 
-`RUNTIME_TRACE_MODE` supports:
+Runtime 启用后，`GET /health/ready` 会增加必需依赖 `runtimeFilesystem`，并对
+`RUNTIME_CACHE_DIR` 和 `RUNTIME_WORK_DIR` 实际执行目录创建、临时文件写入、读取和
+删除。任一检查失败时 readiness 返回 503，响应只包含异常类型，不暴露服务器路径。
 
-- `OFF`: do not start tracing.
-- `ON_FAILURE`: start tracing and upload only for a terminal failure or
-  WAITING_HUMAN.
-- `ALWAYS`: upload Trace for success and failure.
+`RUNTIME_TRACE_MODE` 支持：
 
-## Browser contract
+- `OFF`：不启动 Trace。
+- `ON_FAILURE`：启动 Trace，但仅在执行最终失败或进入 `WAITING_HUMAN` 时上传。
+- `ALWAYS`：无论成功或失败都上传 Trace。
 
-Only `browserSession.mode=MANAGED` is enabled. Supported channels are
-`chromium`, `chrome`, and `msedge`. MANAGED commands must use `ALWAYS` or
-`CLOSE_ON_FINISH`; `profileRef` and `cdpEndpointRef` must be null.
+## 浏览器契约
 
-Flow code receives only `ctx.page`. The safe `ctx.config.browserSession` omits
-Profile and CDP references. Package validation rejects Playwright/database
-imports, direct browser launch/CDP calls, and direct `open()` calls in every
-Python file in the package.
+当前仅启用 `browserSession.mode=MANAGED`，支持的 `channel` 为 `chromium`、`chrome`
+和 `msedge`。MANAGED 命令的 `closePolicy` 必须为 `ALWAYS` 或
+`CLOSE_ON_FINISH`，`profileRef` 和 `cdpEndpointRef` 必须为 null。
 
-Install the preferred bundled browser in a deployment environment:
+Flow 代码只能获得 `ctx.page`。安全配置 `ctx.config.browserSession` 不包含
+`profileRef` 或 `cdpEndpointRef` 引用。包校验会拒绝包内任意 Python 文件导入
+Playwright 或数据库模块、直接启动
+浏览器或调用 CDP，以及直接调用 `open()`。
+
+在部署环境中安装首选的 Playwright 自带浏览器：
 
 ```powershell
 .\.venv\Scripts\python.exe -m playwright install chromium
 ```
 
-The development machine may also use installed Chrome with `channel=chrome`.
+开发机也可以使用本机已安装的 Chrome，并配置 `channel=chrome`。
 
-## Artifact delivery
+## Artifact 交付
 
 ```text
-Flow -> ArtifactRecorder -> local run file
+Flow -> ArtifactRecorder -> 本地 Run 文件
      -> Task POST /worker-api/artifacts/upload-url
-     -> signed object-storage PUT
-     -> Task worker-api/runs/{runId}/artifacts metadata
+     -> 对象存储签名 PUT
+     -> Task worker-api/runs/{runId}/artifacts 元数据
 ```
 
-The upload-url request uses `worker_id`, `task_id`, `run_id`, `name`, and
-`mime_type`. This route and request shape were confirmed by read-only
-test-server OpenAPI inspection on 2026-07-16; the inspection did not upload an
-Artifact or invoke the metadata callback.
+`upload-url` 请求使用 `worker_id`、`task_id`、`run_id`、`name` 和 `mime_type`。
+2026-07-16 对测试服务器 OpenAPI 的只读检查已确认该路由和请求结构；该检查没有上传
+Artifact，也没有调用元数据回调。
 
-Signed URLs are never persisted. Structured logging redacts common signed-query
-credentials. Run files are deleted after browser cleanup when
-`RUNTIME_CLEANUP_ON_FINISH=true`.
+签名 URL 不会持久化。结构化日志会脱敏常见的签名查询凭据。当
+`RUNTIME_CLEANUP_ON_FINISH=true` 时，浏览器资源清理完成后会删除 Run 文件。
 
-## Error mapping
+## 错误映射
 
-| Exception | Result |
+| 异常 | 结果 |
 | --- | --- |
-| `RpaRetryableError`, Playwright/Python timeout | Retry up to configured limit, then FAILED |
-| `RpaBusinessError` | FAILED |
-| `RpaHumanRequiredError` | WAITING_HUMAN |
-| `RpaFatalError` | FAILED |
-| Unknown exception | FAILED with safe `FLOW_UNHANDLED_ERROR` |
+| `RpaRetryableError`、Playwright/Python 超时 | 重试至配置上限，随后进入 `FAILED` |
+| `RpaBusinessError` | `FAILED` |
+| `RpaHumanRequiredError` | `WAITING_HUMAN` |
+| `RpaFatalError` | `FAILED` |
+| 未知异常 | 以安全错误码 `FLOW_UNHANDLED_ERROR` 进入 `FAILED` |
 
-Terminal failure and WAITING_HUMAN attempt a best-effort failure screenshot.
-Flow log/event payloads pass through the standard sensitive-field redactor.
+Runtime 本地文件系统错误使用明确错误码：
 
-## Current integration gates
+| 位置 | 权限错误 | 其他 I/O 错误 |
+| --- | --- | --- |
+| Flow cache | `FLOW_CACHE_ACCESS_DENIED` | `FLOW_CACHE_WRITE_FAILED` |
+| Run 工作目录 | `RUNTIME_WORKDIR_ACCESS_DENIED` | `RUNTIME_WORKDIR_WRITE_FAILED` |
 
-- The 2026-07-16 read-only test-server OpenAPI inspection confirms the complete
-  lease snapshot shape and `leaseExpiresAt` in both lease and renew contracts.
-  No lease was requested, no dedicated real snapshot was inspected, and the
-  real lease/renew/callback sequence has not yet run end to end.
-- Real Task lease remains disabled until dedicated Task data is approved and
-  the lease resolves to the exact active published Registry version. Selecting
-  a latest version as a fallback is forbidden.
-- The default credential resolver rejects non-null `credentialRef`. A strictly
-  scoped `mock_env` resolver is available only for the development/test Mock SRM
-  demonstration. Its credential reference, tenant, Portal account, and
-  controlled Portal URL must match the dedicated lease; a governed credential
-  service adapter is still required for real portal credentials.
-- `config.portalUrl` is accepted only for controlled Mock Runtime commands.
-  Production portal resolution from `portalAccountId` still needs a governed
-  Task/Portal configuration adapter.
-- Event and Artifact metadata callbacks are direct. Durable Callback Outbox
-  dispatch is not yet wired into the Runtime callback path.
-- Lease, renew, event, Artifact upload/metadata, and finish must pass a dedicated
-  real end-to-end test before lease polling is enabled. Production
-  service-account authentication remains a separate release gate.
-- Python Flow modules execute in the Engine process. Static policy checks reduce
-  accidental violations but are not an OS-level sandbox; process/container
-  isolation remains a production-hardening decision.
-- Whole-Flow retry may repeat external side effects. Phase 5 flows must keep
-  actions idempotent; step-level retry is future work.
+这些错误不会回传本地绝对路径。Linux 部署必须固定使用同一个非 root 服务用户，且
+不得让多个 Engine 进程共享 cache/work 目录。
+
+执行最终失败或进入 `WAITING_HUMAN` 时，会尽力采集失败截图。Flow 日志和事件载荷会
+通过标准敏感字段脱敏器处理。
+
+## 当前联调门槛
+
+- 2026-07-16 对测试服务器 OpenAPI 的只读检查确认：`lease` 快照结构完整，且 `lease`
+  和 `renew` 契约均包含 `leaseExpiresAt`。该检查没有请求 `lease`，没有查看专用真实
+  快照，真实 `lease/renew/callback` 链路也尚未完成端到端运行。
+- 在专用 Task 数据获得批准，且 `lease` 能解析到精确、有效、已发布的 Registry 版本
+  前，真实 Task `lease` 必须保持关闭；禁止回退选择最新版本。
+- 默认凭据解析器拒绝非 null 的 `credentialRef`。严格限制作用域的 `mock_env` 解析器
+  仅用于 `development`/`test` 环境的 Mock SRM 演示；其 `credentialRef`、`tenantId`、
+  `portalAccountId` 和受控 Portal URL 必须与专用 `lease` 完全一致。真实 Portal 凭据仍需
+  接入受治理的凭据服务适配器。
+- `config.portalUrl` 仅允许用于受控的 Mock Runtime 命令。生产环境仍需通过受治理的
+  Task/Portal 配置适配器，根据 `portalAccountId` 解析 Portal。
+- 已创建 attempt 的 EVENT 和 FINISH 会持久化到现有 `rpa_callback_outbox`，由后台
+  按至少一次语义重试，并使用稳定的 `Idempotency-Key`。Artifact 上传及 metadata
+  登记仍为直接调用；只有 attempt 创建前的前置拒绝才使用 direct best-effort 回调。
+  Task 必须持久化并按幂等键去重，后续还需结合 `leaseId` 拒绝旧 attempt 发出的
+  跨 attempt 陈旧 FINISH。
+- 启用 `lease` 轮询前，必须通过专用的真实端到端测试，验证 `lease`、`renew`、
+  `event`、Artifact 上传及元数据登记和 `finish`。生产级服务账号鉴权仍是独立的
+  发布门槛。
+- Python Flow 模块在 Engine 进程内执行。静态策略检查可以降低误用风险，但不构成
+  操作系统级沙箱；是否采用进程或容器隔离仍是生产加固待决策项。
+- 整个 Flow 重试可能重复产生外部副作用。Phase 5 Flow 必须保持操作幂等；步骤级重试
+  留待后续实现。

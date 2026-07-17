@@ -12,14 +12,14 @@ class TaskApiAuthProvider(Protocol):
 
 
 class NoAuthProvider:
-    """Temporary compatibility for the current test Worker API."""
+    """当前测试环境 Worker API 的临时兼容实现。"""
 
     async def headers(self) -> dict[str, str]:
         return {}
 
 
 class ServiceAccountAuthProvider:
-    """Credential holder only; token exchange is intentionally deferred."""
+    """仅保存凭据；Token 交换功能按计划延后实现。"""
 
     def __init__(self, client_id: str, client_secret: SecretStr) -> None:
         self._client_id = client_id

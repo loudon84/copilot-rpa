@@ -8,6 +8,7 @@ import shutil
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from nodeskclaw_rpa_engine.core.config import RuntimeTraceMode, Settings
 from nodeskclaw_rpa_engine.core.logging import bind_log_context
@@ -31,6 +32,7 @@ from nodeskclaw_rpa_engine.runtime.errors import (
     ErrorDecision,
     ErrorHandler,
     RpaBusinessError,
+    RpaFatalError,
 )
 from nodeskclaw_rpa_engine.runtime.loader import FlowLoader
 from nodeskclaw_rpa_engine.workers.schemas import (
@@ -86,6 +88,7 @@ class RpaRuntime:
                 payload={"flowVersionId": str(command.flow.flow_version_id)},
             )
             try:
+                await self._verify_work_directory(run_directory)
                 loaded = await self._loader.load(command.flow)
                 self._validate_input(loaded.manifest, lease.input)
                 credentials = await self._credential_resolver.resolve(
@@ -338,6 +341,32 @@ class RpaRuntime:
                 "Flow input does not satisfy the manifest schema",
                 details={"fields": errors},
             )
+
+    async def _verify_work_directory(self, path: Path) -> None:
+        try:
+            await asyncio.to_thread(self._probe_work_directory, path)
+        except PermissionError as exc:
+            raise RpaFatalError(
+                "RUNTIME_WORKDIR_ACCESS_DENIED",
+                "Runtime work directory access was denied",
+            ) from exc
+        except OSError as exc:
+            raise RpaFatalError(
+                "RUNTIME_WORKDIR_WRITE_FAILED",
+                "Runtime work directory could not be prepared",
+            ) from exc
+
+    @staticmethod
+    def _probe_work_directory(path: Path) -> None:
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / f".runtime-workdir-{uuid4().hex}.tmp"
+        payload = b"nodeskclaw-rpa-engine"
+        try:
+            probe.write_bytes(payload)
+            if probe.read_bytes() != payload:
+                raise OSError("Runtime work directory probe read mismatch")
+        finally:
+            probe.unlink(missing_ok=True)
 
     def _run_directory(self, run_id: str, lease_id: str) -> Path:
         path = (

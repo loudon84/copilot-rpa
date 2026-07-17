@@ -161,6 +161,19 @@ class BindingValidationResponse(ApiModel):
     valid: bool
     reason_code: str | None
     version: FlowVersionResponse | None
+    # Task 临时兼容字段。权威快照仍嵌套在 ``version`` 下；待 nodeskclaw-task
+    # 正确读取 version.rpaFlowVersionId/version.packageChecksum 后删除这些别名。
+    rpa_flow_version_id: UUID | None = Field(default=None, deprecated=True)
+    package_checksum: str | None = Field(default=None, deprecated=True)
+    checksum: str | None = Field(default=None, deprecated=True)
+
+    @model_validator(mode="after")
+    def populate_task_compatibility_snapshot(self) -> Self:
+        if self.version is not None:
+            self.rpa_flow_version_id = self.version.rpa_flow_version_id
+            self.package_checksum = self.version.package_checksum
+            self.checksum = self.version.package_checksum
+        return self
 
 
 class RollbackRequest(ApiModel):

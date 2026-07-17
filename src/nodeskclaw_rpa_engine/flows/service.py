@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import logging
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy.exc import IntegrityError
 
@@ -161,12 +163,25 @@ class FlowRegistryService:
         content: bytes,
     ) -> FlowPackageUploadResponse:
         self._require_tenant_for_scope(actor, scope)
-        package = self._validator.validate(filename, content)
+        package = await asyncio.to_thread(self._validator.validate, filename, content)
         manifest = package.manifest
-        object_key = self._package_object_key(package)
-        object_uploaded = False
+        object_key = self._package_object_key(
+            package,
+            scope=scope,
+            tenant_id=actor.tenant_id,
+        )
+        put_started = False
+        db_body_prepared = False
+        commit_confirmed = False
 
         try:
+            put_started = True
+            await self._object_storage.put_package(
+                object_key,
+                package.content,
+                checksum_sha256=package.checksum_sha256,
+            )
+
             async with self._database.session() as session:
                 async with session.begin():
                     repository = SqlAlchemyFlowRepository(session)
@@ -255,24 +270,17 @@ class FlowRegistryService:
                         )
                     )
                     await repository.flush()
-
-                    await self._object_storage.put_package(
-                        object_key,
-                        package.content,
-                        checksum_sha256=package.checksum_sha256,
-                    )
-                    object_uploaded = True
                     await repository.refresh(flow)
                     await repository.refresh(version)
                     await repository.refresh(validation)
-
-            return FlowPackageUploadResponse(
-                flow=self._flow_response(flow),
-                version=self._version_response(version, flow),
-                validation=self._validation_response(validation),
-            )
+                    db_body_prepared = True
+                commit_confirmed = True
+        except asyncio.CancelledError:
+            if put_started and not db_body_prepared and not commit_confirmed:
+                await asyncio.shield(self._delete_failed_upload(object_key))
+            raise
         except IntegrityError as exc:
-            if object_uploaded:
+            if put_started and not commit_confirmed:
                 await self._delete_failed_upload(object_key)
             raise FlowRegistryError(
                 "FLOW_VERSION_EXISTS",
@@ -280,17 +288,23 @@ class FlowRegistryService:
                 status_code=409,
             ) from exc
         except FlowRegistryError:
-            if object_uploaded:
+            if put_started and not db_body_prepared and not commit_confirmed:
                 await self._delete_failed_upload(object_key)
             raise
         except Exception as exc:
-            if object_uploaded:
+            if put_started and not db_body_prepared and not commit_confirmed:
                 await self._delete_failed_upload(object_key)
             raise FlowRegistryError(
                 "FLOW_PACKAGE_STORAGE_FAILED",
                 "Flow package could not be persisted",
                 status_code=503,
             ) from exc
+
+        return FlowPackageUploadResponse(
+            flow=self._flow_response(flow),
+            version=self._version_response(version, flow),
+            validation=self._validation_response(validation),
+        )
 
     async def validate_version(
         self,
@@ -743,7 +757,11 @@ class FlowRegistryService:
                 status_code=503,
             ) from exc
         try:
-            package = self._validator.validate("package.zip", content)
+            package = await asyncio.to_thread(
+                self._validator.validate,
+                "package.zip",
+                content,
+            )
             if package.checksum_sha256 != expected_checksum:
                 raise PackageValidationError(
                     [
@@ -928,11 +946,28 @@ class FlowRegistryService:
         )
 
     @staticmethod
-    def _package_object_key(package: ValidatedPackage) -> str:
+    def _package_object_key(
+        package: ValidatedPackage,
+        *,
+        scope: FlowScope,
+        tenant_id: str | None,
+    ) -> str:
         manifest = package.manifest
+        if scope is FlowScope.TENANT:
+            if tenant_id is None:
+                raise FlowRegistryError(
+                    "TENANT_CONTEXT_REQUIRED",
+                    "X-Tenant-Id is required for TENANT Flow operations",
+                    status_code=400,
+                )
+            tenant_fragment = hashlib.sha256(tenant_id.encode("utf-8")).hexdigest()
+            namespace = f"tenant/{tenant_fragment}"
+        else:
+            namespace = "global"
+        upload_id = uuid4().hex
         return (
-            f"flows/{manifest.rpa_flow_id}/{manifest.version}/"
-            f"{package.checksum_sha256}.zip"
+            f"flows/{namespace}/{manifest.rpa_flow_id}/{manifest.version}/"
+            f"{upload_id}-{package.checksum_sha256}.zip"
         )
 
     async def _delete_failed_upload(self, object_key: str) -> None:

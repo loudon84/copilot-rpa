@@ -2,11 +2,16 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import cast
+from uuid import UUID
 
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from pytest import MonkeyPatch
 
+import nodeskclaw_rpa_engine.api.app as app_module
 from nodeskclaw_rpa_engine.api.app import create_app
 from nodeskclaw_rpa_engine.core.config import Settings
 from nodeskclaw_rpa_engine.core.health import ReadinessService
@@ -14,13 +19,24 @@ from nodeskclaw_rpa_engine.flows.schemas import (
     ActorContext,
     BindingValidationRequest,
     BindingValidationResponse,
+    FlowVersionResponse,
+    FlowVersionStatus,
 )
 from nodeskclaw_rpa_engine.flows.service import FlowRegistryService
+from nodeskclaw_rpa_engine.workers.task_client import TaskWorkerApiClient
 
 
 class FailingProbe:
     async def check(self) -> None:
         raise TimeoutError("private dependency detail")
+
+
+class HealthyClosableProbe:
+    async def check(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
 
 
 @asynccontextmanager
@@ -77,6 +93,48 @@ async def test_ready_returns_503_for_failed_required_dependency() -> None:
         "detail": "check_failed:TimeoutError",
     }
     assert "private dependency detail" not in response.text
+
+
+async def test_ready_returns_503_for_unusable_runtime_filesystem(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    blocked_cache_dir = tmp_path / "private-runtime-cache"
+    blocked_cache_dir.write_text("not-a-directory", encoding="utf-8")
+    object_storage = HealthyClosableProbe()
+    task_api = HealthyClosableProbe()
+    monkeypatch.setattr(
+        app_module,
+        "build_object_storage",
+        lambda _: object_storage,
+    )
+    settings = Settings(
+        _env_file=None,
+        app_env="test",
+        minio_enabled=True,
+        minio_endpoint_url="http://object-storage.test",
+        minio_access_key="test-access-key",
+        minio_secret_key="test-secret-key",
+        runtime_enabled=True,
+        runtime_cache_dir=blocked_cache_dir,
+        runtime_work_dir=tmp_path / "work",
+    )
+    app = create_app(
+        settings,
+        task_client=cast(TaskWorkerApiClient, task_api),
+    )
+
+    async with api_client(app) as client:
+        response = await client.get("/health/ready")
+
+    assert response.status_code == 503
+    assert response.json()["status"] == "not_ready"
+    assert response.json()["dependencies"]["runtimeFilesystem"] == {
+        "state": "unhealthy",
+        "required": True,
+        "detail": "check_failed:FileExistsError",
+    }
+    assert "private-runtime-cache" not in response.text
 
 
 async def test_unknown_route_uses_standard_404_response() -> None:
@@ -159,7 +217,51 @@ async def test_binding_validation_static_route_precedes_uuid_route() -> None:
         "valid": False,
         "reasonCode": "FLOW_VERSION_NOT_FOUND",
         "version": None,
+        "rpaFlowVersionId": None,
+        "packageChecksum": None,
+        "checksum": None,
     }
+
+
+def test_binding_validation_exposes_temporary_task_snapshot_aliases() -> None:
+    flow_version_id = UUID("ffd5687a-b213-4f10-9265-1813addb48ec")
+    checksum = (
+        "sha256:4950d0cc1302b11af330ef0abea5b2a603a310210b717d898c9981e64b83fd37"
+    )
+    timestamp = datetime(2026, 7, 16, tzinfo=UTC)
+    version = FlowVersionResponse(
+        rpa_flow_version_id=flow_version_id,
+        rpa_flow_id="rpa_flow_mock_srm_fetch_po",
+        version="1.1.0",
+        status=FlowVersionStatus.PUBLISHED,
+        engine_type="PLAYWRIGHT_CDP",
+        entrypoint="flow.py:run",
+        manifest={},
+        supported_workflow_codes=["srm_fetch_po"],
+        supported_portal_types=["MOCK_SRM"],
+        input_schema=[],
+        capabilities=["PLAYWRIGHT_CDP"],
+        minimum_engine_version="0.5.0",
+        package_uri="https://object-storage.example/flow.zip",
+        package_size_bytes=3979,
+        package_checksum=checksum,
+        created_by="test-actor",
+        created_at=timestamp,
+        published_at=timestamp,
+        updated_at=timestamp,
+    )
+
+    response = BindingValidationResponse(
+        valid=True,
+        reason_code=None,
+        version=version,
+    ).model_dump(mode="json", by_alias=True)
+
+    assert response["version"]["rpaFlowVersionId"] == str(flow_version_id)
+    assert response["version"]["packageChecksum"] == checksum
+    assert response["rpaFlowVersionId"] == str(flow_version_id)
+    assert response["packageChecksum"] == checksum
+    assert response["checksum"] == checksum
 
 
 def test_phase_3_openapi_exposes_flow_registry_and_worker_routes() -> None:

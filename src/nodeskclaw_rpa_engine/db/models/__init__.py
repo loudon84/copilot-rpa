@@ -1,4 +1,4 @@
-"""ORM models matching the manually provisioned rpa_engine schema."""
+"""与手动创建的 rpa_engine Schema 对应的 ORM 模型。"""
 
 from nodeskclaw_rpa_engine.db.models.browser import (
     RpaBrowserProfile,

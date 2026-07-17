@@ -56,6 +56,25 @@ def test_endpoint_must_not_embed_credentials() -> None:
             task_api_base_url="http://user:password@example.test/api",
         )
 
+    with pytest.raises(ValidationError, match="must not contain credentials"):
+        Settings(
+            _env_file=None,
+            task_artifact_upload_base_url=(
+                "http://user:password@storage-proxy.test"
+            ),
+        )
+
+
+def test_artifact_upload_base_url_is_optional_and_empty_means_disabled() -> None:
+    assert Settings(_env_file=None).task_artifact_upload_base_url is None
+    assert (
+        Settings(
+            _env_file=None,
+            task_artifact_upload_base_url="",
+        ).task_artifact_upload_base_url
+        is None
+    )
+
 
 def test_public_snapshot_does_not_expose_secrets() -> None:
     settings = Settings(

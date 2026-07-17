@@ -1,4 +1,6 @@
 .env
+.env.*
+!.env.example
 .venv/
 .agents/
 .tmp/
@@ -13,6 +15,13 @@ pytest-cache-files-*/
 htmlcov/
 dist/
 build/
+*.zip
 storage/
 runtime-cache/
+artifacts/
+downloads/
+test-results/
+playwright-report/
+*.trace
+*.har
 *.log

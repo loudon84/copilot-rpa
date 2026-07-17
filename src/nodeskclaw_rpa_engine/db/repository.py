@@ -6,7 +6,7 @@ EntityT = TypeVar("EntityT")
 
 
 class Repository(Protocol[EntityT]):
-    """Minimum repository contract; concrete repositories arrive with Phase 2 models."""
+    """最小 Repository 契约；具体实现随 Phase 2 模型提供。"""
 
     async def get(self, entity_id: str) -> EntityT | None: ...
 

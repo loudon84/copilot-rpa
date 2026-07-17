@@ -88,6 +88,7 @@ class Settings(BaseSettings):
     minio_region: str = "us-east-1"
 
     task_api_base_url: str = "http://127.0.0.1:4520/api/v1/autotask"
+    task_artifact_upload_base_url: str | None = None
     task_auth_mode: TaskAuthMode = TaskAuthMode.NONE
     task_client_id: str | None = None
     task_client_secret: SecretStr | None = None
@@ -159,6 +160,7 @@ class Settings(BaseSettings):
     @field_validator(
         "minio_endpoint_url",
         "task_client_id",
+        "task_artifact_upload_base_url",
         "worker_agent_version",
         "worker_os",
         "mock_srm_credential_ref",
@@ -189,6 +191,19 @@ class Settings(BaseSettings):
     @classmethod
     def validate_task_api_url(cls, value: str) -> str:
         return cls._validate_http_url(value, "TASK_API_BASE_URL")
+
+    @field_validator("task_artifact_upload_base_url")
+    @classmethod
+    def validate_task_artifact_upload_base_url(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        if value is None:
+            return None
+        return cls._validate_http_url(
+            value,
+            "TASK_ARTIFACT_UPLOAD_BASE_URL",
+        )
 
     @field_validator("rpa_engine_public_base_url")
     @classmethod
@@ -323,7 +338,7 @@ class Settings(BaseSettings):
         return self
 
     def public_snapshot(self) -> dict[str, Any]:
-        """Return safe operational settings without endpoints containing secrets."""
+        """返回安全的运行配置，不包含可能携带秘密的端点。"""
         return {
             "appName": self.app_name,
             "appVersion": self.app_version,

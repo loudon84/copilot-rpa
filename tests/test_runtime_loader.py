@@ -150,3 +150,38 @@ async def test_loader_rejects_flow_requiring_newer_engine(tmp_path) -> None:
         await loader.load(resolved(content))
 
     assert captured.value.code == "ENGINE_VERSION_INCOMPATIBLE"
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_code"),
+    [
+        (PermissionError("cache denied"), "FLOW_CACHE_ACCESS_DENIED"),
+        (OSError("cache write failed"), "FLOW_CACHE_WRITE_FAILED"),
+    ],
+)
+async def test_loader_maps_cache_os_errors(
+    tmp_path,
+    monkeypatch,
+    error: OSError,
+    expected_code: str,
+) -> None:
+    content = flow_package()
+    loader = FlowLoader(
+        Settings(
+            _env_file=None,
+            runtime_cache_dir=tmp_path / "flows",
+            runtime_work_dir=tmp_path / "runs",
+        ),
+        MemorySource(content),
+    )
+
+    def fail_cache_write(*_args: object) -> None:
+        raise error
+
+    monkeypatch.setattr(loader, "_replace_cache", fail_cache_write)
+
+    with pytest.raises(RpaFatalError) as captured:
+        await loader.load(resolved(content))
+
+    assert captured.value.code == expected_code
+    assert captured.value.__cause__ is error
