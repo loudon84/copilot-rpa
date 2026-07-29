@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import re
 import shutil
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -44,6 +46,21 @@ from nodeskclaw_rpa_engine.workers.schemas import (
 logger = logging.getLogger(__name__)
 
 EventSinkFactory = Callable[[RunCommand], RuntimeEventSink]
+_SENSITIVE_OUTPUT_KEY_PARTS = (
+    "authorization",
+    "credential",
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "cookie",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _FlowExecution:
+    decision: ErrorDecision | None
+    output: dict[str, Any] | None = None
 
 
 class RpaRuntime:
@@ -122,12 +139,12 @@ class RpaRuntime:
                     event_sink=sink,
                     safe_config=self._safe_config(command),
                 )
-                result = await self._execute_with_retries(
+                execution = await self._execute_with_retries(
                     loaded.run,
                     context,
                     sink,
                 )
-                if result is None:
+                if execution.decision is None:
                     if self._settings.runtime_trace_mode is RuntimeTraceMode.ALWAYS:
                         trace_recorded = await self._record_trace(
                             session,
@@ -139,8 +156,12 @@ class RpaRuntime:
                         "RUNTIME_SUCCEEDED",
                         message="Runtime completed successfully",
                     )
-                    return RunResult(status=AttemptStatus.SUCCESS)
+                    return RunResult(
+                        status=AttemptStatus.SUCCESS,
+                        output=execution.output,
+                    )
 
+                result = execution.decision
                 await self._capture_failure(recorder)
                 if self._settings.runtime_trace_mode in {
                     RuntimeTraceMode.ALWAYS,
@@ -216,16 +237,19 @@ class RpaRuntime:
         entrypoint: Callable[[RunContext], Any],
         context: RunContext,
         sink: RuntimeEventSink,
-    ) -> ErrorDecision | None:
+    ) -> _FlowExecution:
         attempt_no = 0
         while True:
             attempt_no += 1
             try:
-                await asyncio.wait_for(
+                raw_output = await asyncio.wait_for(
                     entrypoint(context),
                     timeout=self._settings.runtime_timeout_seconds,
                 )
-                return None
+                return _FlowExecution(
+                    decision=None,
+                    output=self._validate_output(raw_output),
+                )
             except Exception as exc:
                 decision = self._error_handler.classify(
                     exc,
@@ -233,7 +257,7 @@ class RpaRuntime:
                     max_retries=self._settings.runtime_max_retries,
                 )
                 if not decision.retry:
-                    return decision
+                    return _FlowExecution(decision=decision)
                 await self._emit(
                     sink,
                     "RUNTIME_RETRYING",
@@ -248,6 +272,54 @@ class RpaRuntime:
                     await asyncio.sleep(
                         self._settings.runtime_retry_backoff_seconds
                     )
+
+    def _validate_output(self, value: object) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise RpaFatalError(
+                "FLOW_OUTPUT_INVALID",
+                "Flow output must be a JSON object or null",
+            )
+        try:
+            encoded = json.dumps(
+                value,
+                ensure_ascii=False,
+                allow_nan=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        except (OverflowError, RecursionError, TypeError, ValueError) as exc:
+            raise RpaFatalError(
+                "FLOW_OUTPUT_INVALID",
+                "Flow output is not valid JSON",
+            ) from exc
+        self._validate_output_keys(value)
+        if len(encoded) > self._settings.runtime_output_max_bytes:
+            raise RpaFatalError(
+                "FLOW_OUTPUT_TOO_LARGE",
+                "Flow output exceeds the configured size limit",
+            )
+        return value
+
+    @classmethod
+    def _validate_output_keys(cls, value: object) -> None:
+        if isinstance(value, Mapping):
+            for key, child in value.items():
+                if not isinstance(key, str):
+                    raise RpaFatalError(
+                        "FLOW_OUTPUT_INVALID",
+                        "Flow output object keys must be strings",
+                    )
+                normalized = re.sub(r"[^a-z0-9]+", "", key.casefold())
+                if any(part in normalized for part in _SENSITIVE_OUTPUT_KEY_PARTS):
+                    raise RpaFatalError(
+                        "FLOW_OUTPUT_INVALID",
+                        "Flow output contains a prohibited sensitive field",
+                    )
+                cls._validate_output_keys(child)
+        elif isinstance(value, (list, tuple)):
+            for child in value:
+                cls._validate_output_keys(child)
 
     async def _record_trace(
         self,

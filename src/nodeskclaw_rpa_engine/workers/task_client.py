@@ -43,6 +43,7 @@ class TaskWorkerApiClient:
             base_url=settings.task_api_base_url.rstrip("/") + "/",
             timeout=settings.task_api_timeout_seconds,
             transport=transport,
+            trust_env=False,
         )
 
     async def check(self) -> None:

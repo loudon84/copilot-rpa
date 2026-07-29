@@ -84,6 +84,18 @@ Artifact，也没有调用元数据回调。
 签名 URL 不会持久化。结构化日志会脱敏常见的签名查询凭据。当
 `RUNTIME_CLEANUP_ON_FINISH=true` 时，浏览器资源清理完成后会删除 Run 文件。
 
+## Flow 结构化输出
+
+成功的 `flow.py:run(ctx)` 可以返回 `dict`，Runtime 会把它放入 `RunResult.output`，
+Worker 再通过持久化 FINISH Outbox 传给 Task。返回 `None` 的旧 Flow 保持兼容；非
+`SUCCESS` 结果禁止携带 output。
+
+输出必须可以由严格 JSON 编码，禁止 `NaN`、`Infinity`、非字符串对象键，以及名称
+包含 password、secret、token、credential、authorization 或 cookie 的敏感字段。
+UTF-8 JSON 默认不得超过 `RUNTIME_OUTPUT_MAX_BYTES=1048576`。非法或超限分别返回
+`FLOW_OUTPUT_INVALID`、`FLOW_OUTPUT_TOO_LARGE`，均按致命错误处理，不重新执行已经
+产生外部业务副作用的 Flow。输出正文不会写入 Engine 日志。
+
 ## 错误映射
 
 | 异常 | 结果 |

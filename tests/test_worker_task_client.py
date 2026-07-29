@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import httpx
 import pytest
@@ -24,6 +25,23 @@ from nodeskclaw_rpa_engine.workers.task_client import TaskWorkerApiClient
 
 def worker_settings() -> Settings:
     return Settings(_env_file=None, app_env="test", task_api_base_url="http://task/api")
+
+
+async def test_task_client_does_not_use_environment_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    original_async_client = httpx.AsyncClient
+
+    def build_client(*args: Any, **kwargs: Any) -> httpx.AsyncClient:
+        captured.update(kwargs)
+        return original_async_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", build_client)
+    client = TaskWorkerApiClient(worker_settings())
+    await client.close()
+
+    assert captured["trust_env"] is False
 
 
 def test_artifact_upload_url_request_requires_run_id() -> None:
@@ -201,6 +219,34 @@ async def test_event_and_finish_send_idempotency_key_header() -> None:
     assert calls == [
         ("/api/worker-api/runs/run-1/events", "event-key-1"),
         ("/api/worker-api/runs/run-1/finish", "finish-key-1"),
+    ]
+
+
+async def test_finish_sends_success_output() -> None:
+    bodies: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(__import__("json").loads(request.content))
+        return httpx.Response(200, json={"code": 0, "data": {"accepted": True}})
+
+    client = TaskWorkerApiClient(
+        worker_settings(),
+        transport=httpx.MockTransport(handler),
+    )
+    await client.finish(
+        "run-1",
+        RunFinishRequest(
+            status=AttemptStatus.SUCCESS,
+            output={"schemaVersion": "ORDER_DOWNLOAD_PUSH_OUTPUT_V1"},
+        ),
+    )
+    await client.close()
+
+    assert bodies == [
+        {
+            "status": "SUCCESS",
+            "output": {"schemaVersion": "ORDER_DOWNLOAD_PUSH_OUTPUT_V1"},
+        }
     ]
 
 

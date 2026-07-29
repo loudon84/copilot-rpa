@@ -503,6 +503,21 @@ async def test_shutdown_abandons_attempt_and_enqueues_finish_atomically(
     )
     assert transitions == [AttemptStatus.RUNNING, AttemptStatus.FAILED]
 
+    target.status = AttemptStatus.RUNNING.value
+    transitions.clear()
+    await worker_pool._complete_attempt(  # noqa: SLF001
+        target.id,
+        run_id="run-1",
+        status=AttemptStatus.SUCCESS,
+        error_code=None,
+        error_message=None,
+        output={"schemaVersion": "ORDER_DOWNLOAD_PUSH_OUTPUT_V1"},
+    )
+    assert transitions == [AttemptStatus.SUCCESS]
+    assert outbox.calls[-1][1].output == {
+        "schemaVersion": "ORDER_DOWNLOAD_PUSH_OUTPUT_V1"
+    }
+
 
 async def test_stop_cancels_active_tasks_when_draining_write_fails() -> None:
     worker_pool = pool(settings=enabled_settings(worker_shutdown_grace_seconds=0))

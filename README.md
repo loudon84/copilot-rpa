@@ -2,7 +2,7 @@
 
 English | [简体中文](README.zh-CN.md)
 
-AutoTask product branch `v0.1` contains RPA Engine component version `0.5.0`.
+AutoTask product branch `v0.1` contains RPA Engine component version `0.6.0`.
 The Engine provides configuration, structured logs, health/readiness endpoints,
 the PostgreSQL and S3-compatible foundations, Flow Registry and versioned
 package management, an internal Worker Pool, exact package loading, MANAGED
@@ -19,6 +19,12 @@ Mock SRM baseline covering SUCCESS, FAILED, and WAITING_HUMAN. Flow `1.1.0`
 uses a configured supplier portal and performs login, order lookup, detail-page
 navigation, and XLSX download. WAITING_HUMAN uses the type-A model and does not
 resume the original server browser session.
+
+Starting with `0.6.0`, a successful `flow.py:run(ctx)` may return a JSON object.
+The Runtime validates JSON encoding, prohibited sensitive keys, and the
+`RUNTIME_OUTPUT_MAX_BYTES` limit before forwarding the value only in the
+SUCCESS finish callback through the existing Callback Outbox. Flows returning
+`None` remain compatible, and output-validation failures are not retried.
 
 ## Requirements
 

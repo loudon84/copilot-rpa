@@ -2,8 +2,8 @@
 
 简体中文 | [English](README.md)
 
-AutoTask 产品分支 `v0.1` 包含 RPA Engine 组件版本 `0.5.0`。两者是不同的
-版本维度：`v0.1` 是产品分支，`0.5.0` 是当前 Engine 包和服务版本。
+AutoTask 产品分支 `v0.1` 包含 RPA Engine 组件版本 `0.6.0`。两者是不同的
+版本维度：`v0.1` 是产品分支，`0.6.0` 是当前 Engine 包和服务版本。
 
 Engine 当前提供配置管理、结构化日志、存活与就绪检查、PostgreSQL 与
 S3 兼容存储基础设施、Flow Registry 与版本化包管理、内部 Worker Pool、
@@ -14,6 +14,12 @@ Engine 负责 Flow Registry 元数据和 Flow Package；`nodeskclaw-task` 负责
 WorkflowBinding、业务任务、Run、事件、Artifact 元数据和 HumanAction。
 Engine 没有对外提供直接运行或调试 Flow 的 HTTP API，业务运行由 Task 创建
 任务和 Run 后，通过 Worker lease 驱动。
+
+从 `0.6.0` 开始，Flow 成功时可以从 `flow.py:run(ctx)` 返回 JSON object。
+Engine 会执行严格 JSON、敏感字段和大小校验，只在 `SUCCESS` finish 中通过
+Callback Outbox 传递该输出；默认上限由 `RUNTIME_OUTPUT_MAX_BYTES=1048576`
+控制。返回 `None` 的历史 Flow 保持兼容。输出校验失败不会重跑已经完成业务操作
+的 Flow。
 
 2026-07-16 对测试服务器 OpenAPI 进行的只读核对已确认：Task 提供了 Engine
 所需的 lease/renew 契约字段，以及 Worker Artifact 上传地址接口。该核对只

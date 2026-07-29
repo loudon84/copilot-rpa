@@ -138,6 +138,10 @@ def test_runtime_defaults_are_safe_and_disabled() -> None:
     assert settings.runtime_timeout_seconds == 900
     assert settings.runtime_max_retries == 2
     assert settings.runtime_trace_mode.value == "ON_FAILURE"
+    assert settings.runtime_output_max_bytes == 1024 * 1024
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, runtime_output_max_bytes=1023)
 
 
 def test_enabled_runtime_requires_object_storage() -> None:

@@ -129,6 +129,11 @@ class Settings(BaseSettings):
     runtime_retry_backoff_seconds: float = Field(default=1.0, ge=0, le=300)
     runtime_cleanup_on_finish: bool = True
     runtime_trace_mode: RuntimeTraceMode = RuntimeTraceMode.ON_FAILURE
+    runtime_output_max_bytes: int = Field(
+        default=1024 * 1024,
+        ge=1024,
+        le=50 * 1024 * 1024,
+    )
     artifact_max_bytes: int = Field(
         default=200 * 1024 * 1024,
         ge=1024,

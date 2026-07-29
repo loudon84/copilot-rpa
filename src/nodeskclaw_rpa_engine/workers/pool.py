@@ -5,7 +5,7 @@ import contextlib
 import hashlib
 import logging
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
 from nodeskclaw_rpa_engine.core.config import Settings
@@ -279,6 +279,7 @@ class WorkerPool:
                 status=result.status,
                 error_code=result.error_code,
                 error_message=result.error_message,
+                output=result.output,
             )
         except asyncio.CancelledError:
             if attempt_id is not None:
@@ -469,6 +470,7 @@ class WorkerPool:
         status: AttemptStatus,
         error_code: str | None,
         error_message: str | None,
+        output: dict[str, Any] | None = None,
     ) -> None:
         async with self._database.session() as session, session.begin():
             repository = SqlAlchemyAttemptRepository(session)
@@ -481,6 +483,7 @@ class WorkerPool:
                 terminal_status = current_status
                 terminal_error_code = attempt.error_code
                 terminal_error_message = attempt.error_message
+                terminal_output = None
             else:
                 if (
                     current_status is AttemptStatus.LEASED
@@ -496,6 +499,9 @@ class WorkerPool:
                 terminal_status = status
                 terminal_error_code = error_code
                 terminal_error_message = error_message
+                terminal_output = (
+                    output if status is AttemptStatus.SUCCESS else None
+                )
 
             await self._callback_outbox.enqueue_finish(
                 session,
@@ -509,6 +515,7 @@ class WorkerPool:
                     ),
                     error_code=terminal_error_code,
                     error_message=terminal_error_message,
+                    output=terminal_output,
                 ),
             )
 

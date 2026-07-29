@@ -6,7 +6,7 @@ from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 def to_camel(value: str) -> str:
@@ -150,6 +150,13 @@ class RunFinishRequest(CamelModel):
     status: AttemptStatus
     error_code: str | None = None
     error_message: str | None = None
+    output: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def validate_output_status(self) -> RunFinishRequest:
+        if self.output is not None and self.status is not AttemptStatus.SUCCESS:
+            raise ValueError("Run output is allowed only for SUCCESS")
+        return self
 
 
 class ArtifactUploadUrlRequest(CamelModel):
@@ -194,6 +201,7 @@ class RunResult(CamelModel):
     status: AttemptStatus
     error_code: str | None = None
     error_message: str | None = None
+    output: dict[str, Any] | None = None
 
     @field_validator("status")
     @classmethod
@@ -201,6 +209,12 @@ class RunResult(CamelModel):
         if value not in TERMINAL_ATTEMPT_STATUSES:
             raise ValueError("RunResult status must be terminal")
         return value
+
+    @model_validator(mode="after")
+    def validate_output_status(self) -> RunResult:
+        if self.output is not None and self.status is not AttemptStatus.SUCCESS:
+            raise ValueError("Run output is allowed only for SUCCESS")
+        return self
 
 
 class WorkerResponse(CamelModel):

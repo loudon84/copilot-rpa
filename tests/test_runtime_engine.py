@@ -242,6 +242,59 @@ async def test_runtime_retries_retryable_flow_then_succeeds(tmp_path) -> None:
     assert sum(item["type"] == "RUNTIME_RETRYING" for item in events.items) == 2
 
 
+async def test_runtime_returns_structured_flow_output(tmp_path) -> None:
+    output = {
+        "schemaVersion": "ORDER_DOWNLOAD_PUSH_OUTPUT_V1",
+        "poNo": "PO-001",
+        "lines": [{"lineNumber": "10", "customerItemNumber": "MAT-001"}],
+    }
+
+    async def flow(_ctx):
+        return output
+
+    handler, _, _, _ = runtime(tmp_path, flow)
+    result = await handler.handle(command())
+
+    assert result.status is AttemptStatus.SUCCESS
+    assert result.output == output
+
+
+@pytest.mark.parametrize(
+    ("flow_output", "expected_code"),
+    [
+        (["not-an-object"], "FLOW_OUTPUT_INVALID"),
+        ({"value": float("nan")}, "FLOW_OUTPUT_INVALID"),
+        ({"nested": {"accessToken": "must-not-pass"}}, "FLOW_OUTPUT_INVALID"),
+        ({"payload": "x" * 2048}, "FLOW_OUTPUT_TOO_LARGE"),
+    ],
+)
+async def test_runtime_rejects_invalid_output_without_retry(
+    tmp_path,
+    flow_output,
+    expected_code: str,
+) -> None:
+    attempts = 0
+
+    async def flow(_ctx):
+        nonlocal attempts
+        attempts += 1
+        return flow_output
+
+    handler, _, _, events = runtime(
+        tmp_path,
+        flow,
+        runtime_max_retries=2,
+        runtime_output_max_bytes=1024,
+    )
+    result = await handler.handle(command())
+
+    assert result.status is AttemptStatus.FAILED
+    assert result.error_code == expected_code
+    assert result.output is None
+    assert attempts == 1
+    assert all(item["type"] != "RUNTIME_RETRYING" for item in events.items)
+
+
 async def test_runtime_maps_human_error_and_captures_failure(tmp_path) -> None:
     async def flow(_ctx) -> None:
         raise RpaHumanRequiredError("MFA_REQUIRED", "Manual verification is required")

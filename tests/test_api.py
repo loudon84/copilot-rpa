@@ -59,7 +59,7 @@ async def test_live_and_ready_endpoints_with_offline_defaults() -> None:
     assert live.status_code == 200
     assert live.json() == {
         "service": "nodeskclaw-rpa-engine",
-        "version": "0.5.0",
+        "version": "0.6.0",
         "environment": "test",
         "status": "alive",
     }
