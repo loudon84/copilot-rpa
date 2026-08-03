@@ -69,6 +69,9 @@ The ordered test-server deployment, Flow publication, Task data setup, and
 end-to-end acceptance checklist is in
 [`docs/PHASE5_TEST_SERVER_HANDOFF.md`](docs/PHASE5_TEST_SERVER_HANDOFF.md).
 
+The Chinese handover runbook for Auth, Task, Engine, and Client startup is in
+[`docs/LOCAL_SUITE_RUNBOOK.zh-CN.md`](docs/LOCAL_SUITE_RUNBOOK.zh-CN.md).
+
 Run all three Phase 5 scenarios locally with installed Chrome:
 
 ```powershell

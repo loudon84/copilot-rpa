@@ -81,6 +81,8 @@ Engine 根地址，因为 Registry 返回的 Flow `packageUri` 会使用该地�
   [`docs/PHASE5_MOCK_SRM.md`](docs/PHASE5_MOCK_SRM.md)
 - 测试机部署、Flow 发布、Task 数据准备和端到端验收顺序：
   [`docs/PHASE5_TEST_SERVER_HANDOFF.md`](docs/PHASE5_TEST_SERVER_HANDOFF.md)
+- Auth、Task、Engine 与 Client 的交接启动、健康检查和常见故障处理：
+  [`docs/LOCAL_SUITE_RUNBOOK.zh-CN.md`](docs/LOCAL_SUITE_RUNBOOK.zh-CN.md)
 
 安装 Chrome 后，可以在本机运行全部三个 Phase 5 场景：
 
