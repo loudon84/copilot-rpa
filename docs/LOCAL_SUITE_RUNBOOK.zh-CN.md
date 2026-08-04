@@ -73,6 +73,12 @@ CREATE DATABASE nodeskclaw_task
   TEMPLATE template0;
 ```
 
+创建数据库后，在 DBeaver 中重新连接到 `nodeskclaw_task`，再执行：
+
+```sql
+CREATE SCHEMA IF NOT EXISTS rpa_engine AUTHORIZATION task_user;
+```
+
 Auth `.env` 指向 `nodeskclaw_backend_local`；Task 和 Engine `.env` 均指向
 `nodeskclaw_task`。首次部署按 Auth、Task、Engine 顺序显式执行一次迁移，成功后
 运行期保持 `SKIP_AUTO_MIGRATE=1`：
@@ -92,9 +98,9 @@ cd D:\AutoTask-Workspace\nodeskclaw-rpa-engine
 ```
 
 Auth 首次启动会按 `INIT_ADMIN_ACCOUNT` 创建管理员，并在控制台显示随机初始密码；
-首次登录后立即改密。Engine 的基线迁移会在全新的 `nodeskclaw_task` 中创建
-`rpa_engine` Schema、九张表和 `rpa_engine.alembic_version`。如果九张表已经由
-管理员预建，禁止再次 upgrade；先完成结构漂移检查，再执行
+首次登录后立即改密。管理员必须先创建空的 `rpa_engine` Schema，随后 Engine
+基线迁移创建九张表和 `rpa_engine.alembic_version`。如果九张表已经由管理员
+预建，禁止再次 upgrade；先完成结构漂移检查，再执行
 `alembic stamp 20260713_0001`。
 
 ## 3. 配置文件与凭据
