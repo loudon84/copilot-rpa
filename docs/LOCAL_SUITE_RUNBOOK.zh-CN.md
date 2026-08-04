@@ -54,8 +54,10 @@ npm ci
 
 ### 全新机器数据库初始化
 
-4510 和 4520 使用两个独立数据库。PostgreSQL 管理员在自动提交模式下逐条执行，
-密码现场设置并通过安全渠道保管：
+Auth 使用独立数据库；Task 与 Engine 共享 `nodeskclaw_task` 数据库，但分别使用
+`public` 和 `rpa_engine` Schema。Engine 当前冻结校验要求数据库名为
+`nodeskclaw_task`，基线 DDL 要求角色为 `task_user`。PostgreSQL 管理员在自动
+提交模式下逐条执行，密码现场设置并通过安全渠道保管：
 
 ```sql
 CREATE ROLE nodeskclaw_backend_local LOGIN PASSWORD '<现场设置强密码>';
@@ -64,15 +66,16 @@ CREATE DATABASE nodeskclaw_backend_local
   ENCODING 'UTF8'
   TEMPLATE template0;
 
-CREATE ROLE nodeskclaw_task_local LOGIN PASSWORD '<现场设置强密码>';
-CREATE DATABASE nodeskclaw_task_local
-  OWNER nodeskclaw_task_local
+CREATE ROLE task_user LOGIN PASSWORD '<现场设置强密码>';
+CREATE DATABASE nodeskclaw_task
+  OWNER task_user
   ENCODING 'UTF8'
   TEMPLATE template0;
 ```
 
-两份 `.env` 分别指向对应数据库。首次部署显式执行一次迁移，成功后运行期保持
-`SKIP_AUTO_MIGRATE=1`：
+Auth `.env` 指向 `nodeskclaw_backend_local`；Task 和 Engine `.env` 均指向
+`nodeskclaw_task`。首次部署按 Auth、Task、Engine 顺序显式执行一次迁移，成功后
+运行期保持 `SKIP_AUTO_MIGRATE=1`：
 
 ```powershell
 cd D:\AutoTask-Workspace\nodeskclaw\nodeskclaw-backend
@@ -82,11 +85,17 @@ uv run alembic current
 cd D:\AutoTask-Workspace\nodeskclaw\nodeskclaw-task
 uv run alembic upgrade head
 uv run alembic current
+
+cd D:\AutoTask-Workspace\nodeskclaw-rpa-engine
+.\.venv\Scripts\python.exe -m alembic upgrade head
+.\.venv\Scripts\python.exe -m alembic current
 ```
 
 Auth 首次启动会按 `INIT_ADMIN_ACCOUNT` 创建管理员，并在控制台显示随机初始密码；
-首次登录后立即改密。Engine 的九张表属于 Task 数据库内的 `rpa_engine` Schema，
-由 Engine 自己的 Alembic 基线管理，不能用上述两个迁移命令替代。
+首次登录后立即改密。Engine 的基线迁移会在全新的 `nodeskclaw_task` 中创建
+`rpa_engine` Schema、九张表和 `rpa_engine.alembic_version`。如果九张表已经由
+管理员预建，禁止再次 upgrade；先完成结构漂移检查，再执行
+`alembic stamp 20260713_0001`。
 
 ## 3. 配置文件与凭据
 
